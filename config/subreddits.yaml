@@ -1,0 +1,43 @@
+# Subreddits grouped by topic. Per-group thresholds to cut noise.
+# limit = pulled per subreddit per run; further filtered by min_score/min_comments.
+
+groups:
+  - name: fed_markets
+    subreddits:
+      - StockMarket
+      - econmonitor
+      - SecurityAnalysis
+      - investing
+    min_score: 100
+    min_comments: 20
+    limit: 10
+    time_filter: day
+
+  - name: china
+    subreddits:
+      - geopolitics
+      - China_Debate
+    min_score: 100
+    min_comments: 20
+    limit: 10
+    time_filter: day
+
+  - name: ai_semis
+    subreddits:
+      - MachineLearning
+      - LocalLLaMA
+      - semiconductors
+      - datacenter
+    min_score: 75
+    min_comments: 10
+    limit: 10
+    time_filter: day
+
+  - name: ai_business_apps
+    subreddits:
+      - singularity
+      - artificial
+    min_score: 100
+    min_comments: 20
+    limit: 10
+    time_filter: day
