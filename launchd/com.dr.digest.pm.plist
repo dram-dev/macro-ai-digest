@@ -10,8 +10,7 @@
         <string>__UV_PATH__</string>
         <string>run</string>
         <string>digest</string>
-        <string>ingest</string>
-        <string>all</string>
+        <string>pipeline</string>
         <string>--run-type</string>
         <string>pm</string>
     </array>
