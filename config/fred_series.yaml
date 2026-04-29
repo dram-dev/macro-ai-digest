@@ -1,0 +1,30 @@
+# FRED starter set — 12 series tuned for Fed/markets + China macro.
+# Sigma threshold: items are created only when |z| >= this value.
+
+sigma_threshold: 1.0
+
+series:
+  - id: PCEPILFE
+    label: Core PCE YoY
+  - id: CPIAUCSL
+    label: CPI YoY
+  - id: UNRATE
+    label: Unemployment rate
+  - id: ICSA
+    label: Initial jobless claims
+  - id: DFEDTARU
+    label: Fed Funds target (upper)
+  - id: DGS10
+    label: 10Y Treasury yield
+  - id: T10Y2Y
+    label: 2s10s spread
+  - id: T10YIE
+    label: 10Y breakeven inflation
+  - id: M2SL
+    label: M2 money supply
+  - id: NFCI
+    label: Chicago Fed NFCI
+  - id: DEXCHUS
+    label: USD/CNY exchange rate
+  - id: RRPONTSYD
+    label: Overnight reverse repo

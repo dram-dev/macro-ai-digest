@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Install AM + PM launchd jobs on the Mac mini.
+# Run from the project root: bash scripts/install_launchd.sh
+
+set -euo pipefail
+
+PROJECT_PATH="$(cd "$(dirname "$0")/.." && pwd)"
+UV_PATH="$(command -v uv || true)"
+LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
+
+if [[ -z "$UV_PATH" ]]; then
+    echo "✗ 'uv' not found in PATH. Install uv first: brew install uv"
+    exit 1
+fi
+
+echo "Project: $PROJECT_PATH"
+echo "uv:      $UV_PATH"
+echo "Target:  $LAUNCH_AGENTS"
+
+mkdir -p "$LAUNCH_AGENTS"
+mkdir -p "$PROJECT_PATH/logs"
+
+for label in am pm; do
+    src="$PROJECT_PATH/launchd/com.dr.digest.${label}.plist"
+    dst="$LAUNCH_AGENTS/com.dr.digest.${label}.plist"
+
+    if [[ ! -f "$src" ]]; then
+        echo "✗ Missing template: $src"
+        exit 1
+    fi
+
+    # Substitute placeholders into a destination copy
+    sed -e "s|__PROJECT_PATH__|$PROJECT_PATH|g" \
+        -e "s|__UV_PATH__|$UV_PATH|g" \
+        "$src" > "$dst"
+
+    # Unload if already loaded (idempotent)
+    launchctl unload "$dst" 2>/dev/null || true
+    launchctl load "$dst"
+    echo "✓ Loaded $label job"
+done
+
+echo ""
+echo "Verify with: launchctl list | grep com.dr.digest"
+echo "Logs will appear in: $PROJECT_PATH/logs/"

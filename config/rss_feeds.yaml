@@ -1,0 +1,71 @@
+# RSS feeds for AI thinkers, AI capex, and tech commentary.
+# topic_hint is used by Phase 2 triage as a starting prior — not a hard assignment.
+
+feeds:
+  # ── AI thinkers ──────────────────────────────────────────────
+  # Karpathy's active blog since March 2025 is bearblog; github.io Jekyll
+  # still exists but has only one 2026 post (microgpt). Keep both.
+  - name: karpathy_bearblog
+    url: https://karpathy.bearblog.dev/feed/
+    topic_hint: ai_thinkers
+    limit: 10
+
+  - name: karpathy_github
+    url: https://karpathy.github.io/feed.xml
+    topic_hint: ai_thinkers
+    limit: 5
+
+  - name: simon_willison
+    url: https://simonwillison.net/atom/everything/
+    topic_hint: ai_thinkers
+    limit: 20
+
+  - name: mollick_one_useful_thing
+    url: https://www.oneusefulthing.org/feed
+    topic_hint: ai_business_apps
+    limit: 10
+
+  - name: dwarkesh
+    url: https://www.dwarkesh.com/feed
+    topic_hint: ai_thinkers
+    limit: 10
+
+  - name: lilian_weng
+    url: https://lilianweng.github.io/index.xml
+    topic_hint: ai_thinkers
+    limit: 10
+
+  - name: interconnects_lambert
+    url: https://www.interconnects.ai/feed
+    topic_hint: ai_thinkers
+    limit: 10
+
+  # ── AI capex + semi analysis ─────────────────────────────────
+  - name: semianalysis_free
+    url: https://www.semianalysis.com/feed
+    topic_hint: ai_capex
+    limit: 10
+
+  - name: stratechery_free
+    url: https://stratechery.com/feed/
+    topic_hint: ai_capex
+    limit: 10
+
+  # ── General tech / macro adjacencies ─────────────────────────
+  # Reuters killed direct RSS in June 2020 and Bloomberg has been
+  # restricting theirs — use Google News RSS search as the workaround.
+  # This aggregates Reuters/Bloomberg/FT/CNBC/WSJ/etc. by topic.
+  - name: google_news_ai_capex
+    url: 'https://news.google.com/rss/search?q=when:48h+(%22AI+capex%22+OR+%22hyperscaler%22+OR+%22AI+data+center%22+OR+%22AI+infrastructure%22)&hl=en-US&gl=US&ceid=US:en'
+    topic_hint: ai_capex
+    limit: 20
+
+  - name: google_news_semiconductors
+    url: 'https://news.google.com/rss/search?q=when:48h+(semiconductor+OR+NVIDIA+OR+TSMC+OR+ASML+OR+%22AI+chip%22)&hl=en-US&gl=US&ceid=US:en'
+    topic_hint: ai_capex
+    limit: 15
+
+  - name: google_news_tech_topic
+    url: 'https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en'
+    topic_hint: ai_capex
+    limit: 15

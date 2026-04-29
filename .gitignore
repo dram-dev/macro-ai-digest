@@ -1,0 +1,32 @@
+# Environment
+.env
+.venv/
+venv/
+
+# Secrets (but keep the README)
+secrets/*
+!secrets/README.md
+*.json
+!config/*.json
+
+# Data
+data/
+*.db
+*.db-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
