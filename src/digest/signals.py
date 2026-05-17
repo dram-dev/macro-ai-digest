@@ -169,11 +169,16 @@ def _z_hex(z: float | None) -> str:
 
 
 def _chart_block(labels: list[str], values: list[float], dataset_label: str) -> str:
-    """Render an Obsidian Charts bar chart using block YAML for color arrays.
-    Block style avoids the YAML parser misreading inline array commas."""
-    lbl_yaml = "[" + ", ".join(labels) + "]"
+    """Render an Obsidian Charts (phibr0) bar chart block.
+
+    Format requirements:
+    - Labels quoted with double-quotes; hex colors have no inner commas so
+      inline YAML arrays are safe. Avoids block-style arrays which some plugin
+      versions misparse when nested inside a dataset mapping.
+    """
+    lbl_yaml = "[" + ", ".join(f'"{l}"' for l in labels) + "]"
     dat_yaml = "[" + ", ".join(f"{v:.2f}" for v in values) + "]"
-    color_lines = "\n".join(f"      - '{_z_hex(v)}'" for v in values)
+    clr_yaml = "[" + ", ".join(f'"{_z_hex(v)}"' for v in values) + "]"
     return (
         "```chart\n"
         "type: bar\n"
@@ -181,8 +186,7 @@ def _chart_block(labels: list[str], values: list[float], dataset_label: str) -> 
         "datasets:\n"
         f"  - label: \"{dataset_label}\"\n"
         f"    data: {dat_yaml}\n"
-        "    backgroundColor:\n"
-        f"{color_lines}\n"
+        f"    backgroundColor: {clr_yaml}\n"
         "```"
     )
 
