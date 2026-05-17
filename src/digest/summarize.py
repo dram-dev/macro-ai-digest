@@ -318,11 +318,14 @@ def run_summarize(
     """
     if uncapped:
         cap: int | None = None
+        per_source_cap: int | None = None
     elif limit is not None:
         cap = limit
+        per_source_cap = None  # explicit limit overrides per-source cap
     else:
         cap = settings.summarizer_max_per_run
-    rows = db.items_ready_for_summary(limit=cap, source=source)
+        per_source_cap = settings.summarizer_max_per_source if source is None else None
+    rows = db.items_ready_for_summary(limit=cap, source=source, per_source_cap=per_source_cap)
     if not rows:
         logger.info("summarize: nothing ready (source=%s)", source or "all")
         return {"ready": 0, "succeeded": 0, "failed": 0}

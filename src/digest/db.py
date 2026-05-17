@@ -211,33 +211,63 @@ def items_needing_triage(limit: int = 200) -> list[sqlite3.Row]:
 
 
 def items_ready_for_summary(
-    limit: int | None = 20,
+    limit: int | None = 75,
     source: str | None = None,
+    per_source_cap: int | None = None,
 ) -> list[sqlite3.Row]:
     """Items that passed triage but haven't been summarized yet.
 
-    Ordered by triage_score DESC so the top-N most-relevant are picked
-    when more items pass than the cap allows.
+    When per_source_cap is set (and source filter is not), uses a SQLite window
+    function (ROW_NUMBER OVER PARTITION BY source) so no single source can claim
+    more than per_source_cap slots out of the overall limit.
 
     Args:
-        limit: max rows; pass ``None`` for unlimited (used by the clipped pass).
-        source: optional source filter (e.g. "clipped").
-    """
-    sql = """
-        SELECT id, source, source_id, url, title, author, content,
-               published_at, metadata_json, topic, triage_score
-        FROM items
-        WHERE triage_decision = 'keep'
-          AND summary IS NULL
+        limit: total max rows returned.
+        source: optional source filter; when set, per_source_cap is ignored.
+        per_source_cap: max items from any one source (ignored when source is set).
     """
     params: list = []
-    if source is not None:
-        sql += " AND source = ?"
-        params.append(source)
-    sql += " ORDER BY triage_score DESC, ingested_at DESC"
-    if limit is not None:
-        sql += " LIMIT ?"
-        params.append(limit)
+
+    if source is not None or per_source_cap is None:
+        # Simple path: single-source filter or no per-source cap needed.
+        sql = """
+            SELECT id, source, source_id, url, title, author, content,
+                   published_at, metadata_json, topic, triage_score
+            FROM items
+            WHERE triage_decision = 'keep'
+              AND summary IS NULL
+        """
+        if source is not None:
+            sql += " AND source = ?"
+            params.append(source)
+        sql += " ORDER BY triage_score DESC, ingested_at DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+    else:
+        # Window-function path: cap each source independently, then take top-N overall.
+        sql = """
+            SELECT id, source, source_id, url, title, author, content,
+                   published_at, metadata_json, topic, triage_score
+            FROM (
+                SELECT id, source, source_id, url, title, author, content,
+                       published_at, ingested_at, metadata_json, topic, triage_score,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY source
+                           ORDER BY triage_score DESC, ingested_at DESC
+                       ) AS rn
+                FROM items
+                WHERE triage_decision = 'keep'
+                  AND summary IS NULL
+            )
+            WHERE rn <= ?
+            ORDER BY triage_score DESC, ingested_at DESC
+        """
+        params.append(per_source_cap)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+
     with get_conn() as conn:
         return conn.execute(sql, tuple(params)).fetchall()
 

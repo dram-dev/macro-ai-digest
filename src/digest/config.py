@@ -46,7 +46,8 @@ class Settings(BaseSettings):
     # Summarizer (Phase 2)
     summarizer_backend: str = Field(default="claude_cli_pro", alias="SUMMARIZER_BACKEND")
     summarizer_model: str = Field(default="sonnet", alias="SUMMARIZER_MODEL")
-    summarizer_max_per_run: int = Field(default=20, alias="SUMMARIZER_MAX_PER_RUN")
+    summarizer_max_per_run: int = Field(default=75, alias="SUMMARIZER_MAX_PER_RUN")
+    summarizer_max_per_source: int = Field(default=15, alias="SUMMARIZER_MAX_PER_SOURCE")
     summarizer_timeout_sec: int = Field(default=120, alias="SUMMARIZER_TIMEOUT_SEC")
 
     # Optional API keys for fallback summarizer backends
