@@ -194,10 +194,15 @@ def triage_item(item: dict[str, Any]) -> dict[str, Any]:
 
 def run_triage(limit: int = 200) -> dict[str, int]:
     """Triage all pending items (up to `limit`). Returns counts by decision."""
+    # Auto-keep quantitative items first so they never reach Qwen.
+    auto_kept = db.auto_keep_quantitative()
+    if auto_kept:
+        logger.info("triage: auto-kept %d quantitative items (bypassing Qwen)", auto_kept)
+
     items = db.items_needing_triage(limit=limit)
     if not items:
         logger.info("triage: nothing pending")
-        return {"pending": 0, "kept": 0, "dropped": 0, "errors": 0}
+        return {"pending": 0, "kept": auto_kept, "dropped": 0, "errors": 0}
 
     counts = {"pending": len(items), "kept": 0, "dropped": 0, "errors": 0}
     for row in items:

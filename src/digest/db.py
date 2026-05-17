@@ -262,6 +262,37 @@ def auto_keep_clipped() -> int:
         return cur.rowcount or 0
 
 
+# Quantitative ingestors pre-filter to anomalous readings only — every item
+# that reaches the DB has already passed a z-score or dollar threshold.
+# Letting Qwen re-gate them with prose-oriented criteria drops valid signals.
+QUANT_SOURCES = ("fred", "cboe", "cftc", "yahoo", "insider", "ftd")
+
+
+def auto_keep_quantitative() -> int:
+    """Auto-keep untriaged items from quantitative ingestors.
+
+    Applies topic_hint from metadata_json directly as the topic so items
+    land in the right section of the daily note without Qwen guessing.
+    Returns the number of rows updated.
+    """
+    placeholders = ",".join("?" * len(QUANT_SOURCES))
+    sql = f"""
+        UPDATE items
+        SET triage_decision = 'keep',
+            triage_score    = 0.85,
+            topic           = COALESCE(
+                                json_extract(metadata_json, '$.topic_hint'),
+                                'other'
+                              ),
+            triaged_at      = datetime('now')
+        WHERE source IN ({placeholders})
+          AND triage_decision IS NULL
+    """
+    with get_conn() as conn:
+        cur = conn.execute(sql, QUANT_SOURCES)
+        return cur.rowcount or 0
+
+
 def update_triage(
     item_id: int,
     decision: str,        # 'keep' or 'drop'
