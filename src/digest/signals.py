@@ -169,24 +169,22 @@ def _z_hex(z: float | None) -> str:
 
 
 def _chart_block(labels: list[str], values: list[float], dataset_label: str) -> str:
-    """Render an Obsidian Charts (phibr0) bar chart block.
+    """Render a Mermaid xychart-beta bar chart.
 
-    Format requirements:
-    - Labels quoted with double-quotes; hex colors have no inner commas so
-      inline YAML arrays are safe. Avoids block-style arrays which some plugin
-      versions misparse when nested inside a dataset mapping.
+    Works natively in Obsidian 1.4+ — no plugin required.
+    Positive z-scores (stress/elevation) extend upward; negative (easing) downward.
     """
-    lbl_yaml = "[" + ", ".join(f'"{l}"' for l in labels) + "]"
-    dat_yaml = "[" + ", ".join(f"{v:.2f}" for v in values) + "]"
-    clr_yaml = "[" + ", ".join(f'"{_z_hex(v)}"' for v in values) + "]"
+    max_abs = max((abs(v) for v in values), default=3.0)
+    y_max   = max(3.0, round(max_abs + 0.5, 1))
+    lbl     = "[" + ", ".join(f'"{l}"' for l in labels) + "]"
+    dat     = "[" + ", ".join(f"{v:.2f}" for v in values) + "]"
     return (
-        "```chart\n"
-        "type: bar\n"
-        f"labels: {lbl_yaml}\n"
-        "datasets:\n"
-        f"  - label: \"{dataset_label}\"\n"
-        f"    data: {dat_yaml}\n"
-        f"    backgroundColor: {clr_yaml}\n"
+        "```mermaid\n"
+        "xychart-beta\n"
+        f'    title "{dataset_label}"\n'
+        f"    x-axis {lbl}\n"
+        f'    y-axis "z-score" -{y_max} --> {y_max}\n'
+        f"    bar {dat}\n"
         "```"
     )
 
