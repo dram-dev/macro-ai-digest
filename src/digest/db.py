@@ -94,6 +94,14 @@ MIGRATIONS = [
         threads_json TEXT NOT NULL,
         generated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )""",
+    # Phase 5: macro regime classifier
+    """CREATE TABLE IF NOT EXISTS macro_regime (
+        week         TEXT PRIMARY KEY,
+        regime       TEXT NOT NULL,
+        signals_json TEXT NOT NULL,
+        narrative    TEXT NOT NULL,
+        generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
 ]
 
 
@@ -197,17 +205,31 @@ def utcnow_iso() -> str:
 
 
 def items_needing_triage(limit: int = 200) -> list[sqlite3.Row]:
-    """Items ingested recently with no triage decision yet."""
+    """Items ingested within the lookback window with no triage decision yet."""
+    lookback = f"-{settings.triage_lookback_hours} hours"
     sql = """
         SELECT id, source, source_id, url, title, author, content,
                published_at, metadata_json
         FROM items
         WHERE triage_decision IS NULL
+          AND ingested_at >= datetime('now', ?)
         ORDER BY ingested_at DESC
         LIMIT ?
     """
     with get_conn() as conn:
-        return conn.execute(sql, (limit,)).fetchall()
+        return conn.execute(sql, (lookback, limit)).fetchall()
+
+
+def recent_kept_titles(hours: int = 24) -> list[str]:
+    """Titles of kept items from the last N hours, for near-duplicate detection."""
+    sql = """
+        SELECT title FROM items
+        WHERE triage_decision = 'keep'
+          AND triaged_at >= datetime('now', ?)
+    """
+    with get_conn() as conn:
+        rows = conn.execute(sql, (f"-{hours} hours",)).fetchall()
+    return [r["title"] for r in rows if r["title"]]
 
 
 def items_ready_for_summary(
@@ -518,6 +540,48 @@ def get_connections(date_iso: str) -> list:
         return json.loads(row["threads_json"]) or []
     except (json.JSONDecodeError, KeyError):
         return []
+
+
+def get_fred_signals_window(days: int = 45) -> list[sqlite3.Row]:
+    """Latest z-score per FRED series from the past N days.
+
+    Uses a window function to return only the most-recent reading per series,
+    so the macro regime classifier always sees current values.
+    """
+    sql = """
+        WITH ranked AS (
+            SELECT
+                json_extract(metadata_json, '$.series_id') AS series_id,
+                CAST(json_extract(metadata_json, '$.z_score') AS REAL) AS z_score,
+                ROW_NUMBER() OVER (
+                    PARTITION BY json_extract(metadata_json, '$.series_id')
+                    ORDER BY ingested_at DESC
+                ) AS rn
+            FROM items
+            WHERE source = 'fred'
+              AND ingested_at >= datetime('now', ?)
+              AND json_extract(metadata_json, '$.series_id') IS NOT NULL
+        )
+        SELECT series_id, z_score FROM ranked WHERE rn = 1 ORDER BY series_id
+    """
+    with get_conn() as conn:
+        return conn.execute(sql, (f"-{days} days",)).fetchall()
+
+
+def upsert_regime(week_iso: str, regime: str, signals_json: str, narrative: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO macro_regime (week, regime, signals_json, narrative)
+               VALUES (?, ?, ?, ?)""",
+            (week_iso, regime, signals_json, narrative),
+        )
+
+
+def get_latest_regime() -> sqlite3.Row | None:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT week, regime, signals_json, narrative FROM macro_regime ORDER BY week DESC LIMIT 1"
+        ).fetchone()
 
 
 def mark_published(item_ids: list[int]) -> None:

@@ -39,6 +39,7 @@ INGESTORS = {
     "yahoo": "digest.ingest.yahoo:YahooIngestor",
     "hn": "digest.ingest.hackernews:HNIngestor",
     "clipped": "digest.ingest.clipped:ClippedIngestor",
+    "huggingface": "digest.ingest.huggingface:HFIngestor",
 }
 
 
@@ -316,6 +317,37 @@ def recent(source: str | None, limit: int) -> None:
             (row["title"] or "")[:80],
         )
     console.print(table)
+
+
+@main.command()
+def regime() -> None:
+    """Classify current macro regime from FRED signals and show result."""
+    from digest.macro_regime import REGIME_LABELS, compute_regime
+
+    db.init_db()
+    console.rule("[bold cyan]macro regime")
+    try:
+        result = compute_regime()
+        console.print(f"  [bold green]{result.label}[/bold green]  ({result.regime})")
+        if result.dimensions:
+            t = Table(title="Dimension scores")
+            t.add_column("Dimension")
+            t.add_column("Score", justify="right")
+            for dim, score in sorted(result.dimensions.items()):
+                bar = "█" * min(int(abs(score) * 5), 10)
+                sign = "+" if score >= 0 else ""
+                t.add_row(dim, f"{sign}{score:.2f}  {bar}")
+            console.print(t)
+        if result.top_signals:
+            t2 = Table(title="Top FRED signals")
+            t2.add_column("Series")
+            t2.add_column("z-score", justify="right")
+            for label, z in result.top_signals:
+                t2.add_row(label, f"{z:+.2f}")
+            console.print(t2)
+        console.print(f"\n[dim]{result.narrative}[/dim]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [red]✗[/red] {exc}")
 
 
 @main.command("init-db")

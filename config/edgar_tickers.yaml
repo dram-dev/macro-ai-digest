@@ -2,6 +2,7 @@
 # CIK numbers from https://www.sec.gov/cgi-bin/browse-edgar
 
 companies:
+  # ── Hyperscalers (10-K, 10-Q, 8-K) ────────────────────────────────────
   - ticker: MSFT
     name: Microsoft Corporation
     cik: "0000789019"
@@ -20,3 +21,18 @@ companies:
   - ticker: NVDA
     name: NVIDIA Corporation
     cik: "0001045810"
+
+  # ── Institutional investors (13F-HR only) ──────────────────────────────
+  # Quarterly 13-F filings reveal position changes in AI semis + hyperscalers.
+  - ticker: BRIDGEWATER
+    name: Bridgewater Associates LP
+    cik: "0001350694"
+    fund: true
+  - ticker: CITADEL
+    name: Citadel Advisors LLC
+    cik: "0000922157"
+    fund: true
+  - ticker: TIGER_GLOBAL
+    name: Tiger Global Management LLC
+    cik: "0001037389"
+    fund: true

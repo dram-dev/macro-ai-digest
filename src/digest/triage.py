@@ -14,6 +14,7 @@ items where triage_decision IS NULL.
 """
 from __future__ import annotations
 
+import difflib
 import json
 import logging
 import re
@@ -148,6 +149,10 @@ def _normalize_verdict(verdict: dict[str, Any]) -> dict[str, Any]:
         score = 0.0
     score = max(0.0, min(1.0, score))
 
+    # Low-confidence "keep" verdicts are downgraded based on TRIAGE_MIN_SCORE.
+    if decision == "keep" and score < settings.triage_min_score:
+        decision = "drop"
+
     topic = str(verdict.get("topic", "other")).lower().strip()
     if topic not in TOPICS:
         topic = "other"
@@ -180,6 +185,18 @@ def _ollama_call(prompt: str) -> str:
     return r.json().get("response", "")
 
 
+_DEDUP_THRESHOLD = 0.85
+
+
+def _dedup_match(title: str, seen: list[str]) -> str | None:
+    """Return the first seen title with SequenceMatcher ratio ≥ threshold, else None."""
+    t = title.lower()
+    for s in seen:
+        if difflib.SequenceMatcher(None, t, s.lower()).ratio() >= _DEDUP_THRESHOLD:
+            return s
+    return None
+
+
 def triage_item(item: dict[str, Any]) -> dict[str, Any]:
     """Run triage on one item. Returns the normalized verdict."""
     prompt = _build_prompt(item)
@@ -204,10 +221,31 @@ def run_triage(limit: int = 200) -> dict[str, int]:
         logger.info("triage: nothing pending")
         return {"pending": 0, "kept": auto_kept, "dropped": 0, "errors": 0}
 
+    # Seed seen_titles from DB (kept items in the last 24h) for cross-run dedup.
+    # Items kept earlier in this same batch are appended as we go.
+    seen_titles = db.recent_kept_titles(hours=24)
+
     counts = {"pending": len(items), "kept": 0, "dropped": 0, "errors": 0}
     for row in items:
         item_dict = dict(row)
+        title = item_dict.get("title") or ""
         try:
+            # Dedup check: skip Qwen if this title is too similar to a kept item.
+            match = _dedup_match(title, seen_titles)
+            if match:
+                db.update_triage(
+                    item_id=item_dict["id"],
+                    decision="drop",
+                    score=0.0,
+                    topic="other",
+                )
+                counts["dropped"] += 1
+                logger.info(
+                    "triage: id=%d drop/dedup — matches: %.60s",
+                    item_dict["id"], match,
+                )
+                continue
+
             t0 = time.perf_counter()
             verdict = triage_item(item_dict)
             elapsed = time.perf_counter() - t0
@@ -219,6 +257,7 @@ def run_triage(limit: int = 200) -> dict[str, int]:
             )
             if verdict["decision"] == "keep":
                 counts["kept"] += 1
+                seen_titles.append(title)  # track for in-batch dedup
             else:
                 counts["dropped"] += 1
             logger.info(

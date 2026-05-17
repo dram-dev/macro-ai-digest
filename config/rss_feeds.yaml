@@ -69,3 +69,48 @@ feeds:
     url: 'https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en'
     topic_hint: ai_capex
     limit: 15
+
+  # ── AI company official blogs ─────────────────────────────────
+  # OpenAI, Anthropic, Mistral, xAI have no native RSS — use
+  # Google News site: queries to surface their primary publications.
+  - name: openai_official
+    url: 'https://news.google.com/rss/search?q=when:48h+site:openai.com&hl=en-US&gl=US&ceid=US:en'
+    topic_hint: ai_capex
+    limit: 10
+
+  - name: anthropic_official
+    url: 'https://news.google.com/rss/search?q=when:48h+site:anthropic.com&hl=en-US&gl=US&ceid=US:en'
+    topic_hint: ai_thinkers
+    limit: 10
+
+  - name: deepmind_official
+    url: 'https://news.google.com/rss/search?q=when:48h+site:deepmind.google&hl=en-US&gl=US&ceid=US:en'
+    topic_hint: ai_thinkers
+    limit: 10
+
+  - name: meta_ai_official
+    url: 'https://news.google.com/rss/search?q=when:48h+site:ai.meta.com&hl=en-US&gl=US&ceid=US:en'
+    topic_hint: ai_capex
+    limit: 10
+
+  - name: mistral_official
+    url: 'https://news.google.com/rss/search?q=when:48h+site:mistral.ai&hl=en-US&gl=US&ceid=US:en'
+    topic_hint: ai_semis
+    limit: 5
+
+  - name: xai_official
+    url: 'https://news.google.com/rss/search?q=when:48h+site:x.ai&hl=en-US&gl=US&ceid=US:en'
+    topic_hint: ai_capex
+    limit: 5
+
+  # HuggingFace blog has a real Atom feed — high signal for model releases.
+  - name: huggingface_blog
+    url: https://huggingface.co/blog/feed.xml
+    topic_hint: ai_thinkers
+    limit: 10
+
+  # Google Research blog — primary source for Google AI publications.
+  - name: google_research_blog
+    url: https://research.google/blog/rss_feed.xml
+    topic_hint: ai_thinkers
+    limit: 10
