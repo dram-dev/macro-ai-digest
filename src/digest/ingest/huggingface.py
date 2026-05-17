@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 HF_API_MODELS = "https://huggingface.co/api/models"
 MODEL_PAGE = "https://huggingface.co/{model_id}"
 
-LOOKBACK_HOURS = 36
+LOOKBACK_HOURS = 168  # 7 days — tier-1 labs ship every few days, not every 36h
 MIN_LIKES = 200
 
 TIER1_ORGS = {
