@@ -220,6 +220,22 @@ def items_needing_triage(limit: int = 200) -> list[sqlite3.Row]:
         return conn.execute(sql, (lookback, limit)).fetchall()
 
 
+def items_for_signals() -> list[sqlite3.Row]:
+    """All summarized, kept items for signal scoring (no limit — scored in Python)."""
+    sql = """
+        SELECT id, source, url, title, author,
+               published_at, ingested_at,
+               topic, summary, why_it_matters, confidence, see_also,
+               triage_score, metadata_json
+        FROM items
+        WHERE triage_decision = 'keep'
+          AND summary IS NOT NULL
+        ORDER BY triage_score DESC, ingested_at DESC
+    """
+    with get_conn() as conn:
+        return conn.execute(sql).fetchall()
+
+
 def recent_kept_titles(hours: int = 24) -> list[str]:
     """Titles of kept items from the last N hours, for near-duplicate detection."""
     sql = """

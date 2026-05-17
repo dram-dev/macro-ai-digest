@@ -350,6 +350,21 @@ def regime() -> None:
         console.print(f"  [red]✗[/red] {exc}")
 
 
+@main.command()
+@click.option("--top-n", default=100, show_default=True, help="Max items per tier")
+def signals(top_n: int) -> None:
+    """Write High / Medium / Low signal leaderboards to Obsidian."""
+    from digest.signals import write_signal_files
+
+    db.init_db()
+    console.rule("[bold cyan]signals")
+    counts = write_signal_files(top_n=top_n)
+    console.print(
+        f"  [green]✓[/green] high={counts['high']} medium={counts['medium']} low={counts['low']}"
+    )
+    console.print(f"  [dim]→ {counts['high'] + counts['medium'] + counts['low']} total items across 3 files[/dim]")
+
+
 @main.command("init-db")
 def init_db_cmd() -> None:
     """Create the SQLite DB and schema."""
