@@ -9,6 +9,7 @@ dependencies = [
     "pydantic-settings>=2.4",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
+    "defusedxml>=0.7",
     "requests>=2.32",
     "feedparser>=6.0",
     "praw>=7.8",

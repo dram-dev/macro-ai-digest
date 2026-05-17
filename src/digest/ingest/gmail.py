@@ -51,6 +51,7 @@ def _get_credentials() -> Credentials:
 
     token_path.parent.mkdir(parents=True, exist_ok=True)
     token_path.write_text(creds.to_json())
+    token_path.chmod(0o600)
     return creds
 
 

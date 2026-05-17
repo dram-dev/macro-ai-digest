@@ -1,9 +1,11 @@
 """Config loader — reads .env via pydantic-settings, exposes typed Settings."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
+from urllib.parse import urlparse
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -81,6 +83,28 @@ class Settings(BaseSettings):
     obsidian_clip_dir: str = Field(
         default="77_Claude_Investigate", alias="OBSIDIAN_CLIP_DIR"
     )
+
+    # ── Validators ────────────────────────────────────────────────────────
+
+    @field_validator("summarizer_model", mode="before")
+    @classmethod
+    def _validate_model_name(cls, v: str) -> str:
+        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9\-._]*", str(v)):
+            raise ValueError(
+                f"SUMMARIZER_MODEL must contain only letters, digits, hyphens, dots, "
+                f"or underscores — got: {v!r}"
+            )
+        return v
+
+    @field_validator("ollama_host", "mlx_server_url", mode="before")
+    @classmethod
+    def _validate_localhost_url(cls, v: str) -> str:
+        hostname = urlparse(str(v)).hostname
+        if hostname not in ("localhost", "127.0.0.1", "::1"):
+            raise ValueError(
+                f"URL must point to localhost for safety, got hostname: {hostname!r}"
+            )
+        return v
 
 
 settings = Settings()

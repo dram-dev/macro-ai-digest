@@ -232,10 +232,10 @@ def _call_gemini_flash(user_prompt: str) -> str:
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
         "gemini-2.0-flash:generateContent"
-        f"?key={settings.gemini_api_key}"
     )
     r = requests.post(
         url,
+        headers={"x-goog-api-key": settings.gemini_api_key},
         json={
             "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
@@ -299,8 +299,11 @@ def _call_mlx_local(user_prompt: str) -> str:
         )
         r.raise_for_status()
     except requests.ConnectionError as exc:
+        from urllib.parse import urlparse
+        parsed = urlparse(settings.mlx_server_url)
+        safe_url = parsed._replace(username=None, password=None).geturl()
         raise BackendError(
-            f"MLX server not reachable at {settings.mlx_server_url}. "
+            f"MLX server not reachable at {safe_url}. "
             "Start it with: mlx_lm.server --model mlx-community/Qwen3.5-27B-4bit --port 8080"
         ) from exc
     choices = r.json().get("choices", [])

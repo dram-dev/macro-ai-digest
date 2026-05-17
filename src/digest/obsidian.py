@@ -96,6 +96,10 @@ class Paths:
             raise RuntimeError(f"Obsidian vault not found at: {vault}")
 
         digest_root = vault / settings.obsidian_digest_dir
+        if not digest_root.resolve().is_relative_to(vault.resolve()):
+            raise RuntimeError(
+                f"OBSIDIAN_DIGEST_DIR {settings.obsidian_digest_dir!r} must be within the vault."
+            )
         return cls(
             vault=vault,
             digest_root=digest_root,
@@ -404,6 +408,8 @@ def render_daily_note(
 
 def write_daily_note(date_iso: str, paths: Paths) -> tuple[Path, int]:
     """Write the daily note. Returns (path_written, num_items)."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_iso):
+        raise ValueError(f"date_iso must be YYYY-MM-DD, got: {date_iso!r}")
     from digest.charts import build_obsidian_charts, render_png
 
     assets_dir = paths.digest_root / "assets"

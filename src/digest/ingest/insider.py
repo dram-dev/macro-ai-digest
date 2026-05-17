@@ -10,7 +10,7 @@ minimum dollar threshold — ignores option exercises, gifts, and plan purchases
 from __future__ import annotations
 
 import logging
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 

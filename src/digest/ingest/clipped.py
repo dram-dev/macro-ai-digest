@@ -68,7 +68,12 @@ def _resolve_clip_dir() -> Path:
                 "OBSIDIAN_CLIP_DIR is relative but OBSIDIAN_VAULT_PATH is unset. "
                 "Either set the vault path or use an absolute clip dir."
             )
-        p = Path(settings.obsidian_vault_path).expanduser() / raw
+        vault = Path(settings.obsidian_vault_path).expanduser()
+        p = vault / raw
+        if not p.resolve().is_relative_to(vault.resolve()):
+            raise RuntimeError(
+                f"OBSIDIAN_CLIP_DIR {raw!r} must be within the vault."
+            )
     return p
 
 
