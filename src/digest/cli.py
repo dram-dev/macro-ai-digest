@@ -31,7 +31,12 @@ INGESTORS = {
     "substack": "digest.ingest.substack:SubstackIngestor",
     "arxiv": "digest.ingest.arxiv:ArXivIngestor",
     "edgar": "digest.ingest.edgar:EdgarIngestor",
+    "insider": "digest.ingest.insider:InsiderIngestor",
+    "ftd": "digest.ingest.ftd:FTDIngestor",
     "fred": "digest.ingest.fred:FREDIngestor",
+    "cboe": "digest.ingest.cboe:CBOEIngestor",
+    "cftc": "digest.ingest.cftc:CFTCIngestor",
+    "yahoo": "digest.ingest.yahoo:YahooIngestor",
     "hn": "digest.ingest.hackernews:HNIngestor",
     "clipped": "digest.ingest.clipped:ClippedIngestor",
 }

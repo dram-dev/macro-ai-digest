@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     obsidian_vault_path: str = Field(default="", alias="OBSIDIAN_VAULT_PATH")
     obsidian_digest_dir: str = Field(default="80 Digest", alias="OBSIDIAN_DIGEST_DIR")
 
+    # Yahoo Finance watchlist (Tier 2)
+    yahoo_tickers: str = Field(
+        default="NVDA,AMD,TSM,MSFT,GOOGL,META,AMZN,INTC,AVGO,ASML",
+        alias="YAHOO_TICKERS",
+    )
+
     # Clipped X-post / investigate folder (Phase 3.5)
     # Folder inside the vault where you drop Obsidian Web Clipper .md files.
     # Defaults to "77_Claude_Investigate". If set as an absolute path, it wins;
