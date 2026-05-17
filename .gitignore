@@ -27,6 +27,12 @@ build/
 .idea/
 *.swp
 
+# Logs
+logs/
+
+# Claude Code session files
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

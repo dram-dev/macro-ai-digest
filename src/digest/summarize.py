@@ -271,11 +271,50 @@ def _call_local_qwen(user_prompt: str) -> str:
     return r.json().get("response", "")
 
 
+def _call_mlx_local(user_prompt: str) -> str:
+    """MLX-LM server (Apple Silicon). OpenAI-compatible endpoint.
+
+    Start the server before running digest:
+        /Users/dramsey/.venvs/mlx/bin/mlx_lm.server \\
+            --model mlx-community/Qwen3.5-27B-4bit --port 8080
+
+    Thinking mode is disabled via chat_template_kwargs so the model
+    returns clean JSON without <think>...</think> blocks.
+    """
+    url = settings.mlx_server_url.rstrip("/") + "/v1/chat/completions"
+    try:
+        r = requests.post(
+            url,
+            json={
+                "model": settings.mlx_model,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "max_tokens": 600,
+                "temperature": 0.2,
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+            timeout=settings.summarizer_timeout_sec,
+        )
+        r.raise_for_status()
+    except requests.ConnectionError as exc:
+        raise BackendError(
+            f"MLX server not reachable at {settings.mlx_server_url}. "
+            "Start it with: mlx_lm.server --model mlx-community/Qwen3.5-27B-4bit --port 8080"
+        ) from exc
+    choices = r.json().get("choices", [])
+    if not choices:
+        raise BackendError(f"MLX server returned no choices: {r.text[:300]}")
+    return choices[0].get("message", {}).get("content", "")
+
+
 BACKENDS = {
     "claude_cli_pro":     _call_claude_cli,
     "haiku_api":          _call_haiku_api,
     "gemini_flash_free":  _call_gemini_flash,
     "local_qwen":         _call_local_qwen,
+    "mlx_local":          _call_mlx_local,
 }
 
 

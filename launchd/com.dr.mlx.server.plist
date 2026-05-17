@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dr.mlx.server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/dramsey/.venvs/mlx/bin/mlx_lm.server</string>
+        <string>--model</string>
+        <string>mlx-community/Qwen3.5-27B-4bit</string>
+        <string>--port</string>
+        <string>8080</string>
+        <string>--log-level</string>
+        <string>WARNING</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_PATH__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/dramsey/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/dramsey</string>
+    </dict>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__PROJECT_PATH__/logs/mlx_server.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_PATH__/logs/mlx_server.err.log</string>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>

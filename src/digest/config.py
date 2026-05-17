@@ -70,6 +70,10 @@ class Settings(BaseSettings):
         alias="YAHOO_TICKERS",
     )
 
+    # MLX-LM local server (Apple Silicon)
+    mlx_server_url: str = Field(default="http://localhost:8080", alias="MLX_SERVER_URL")
+    mlx_model: str = Field(default="mlx-community/Qwen3.5-27B-4bit", alias="MLX_MODEL")
+
     # Clipped X-post / investigate folder (Phase 3.5)
     # Folder inside the vault where you drop Obsidian Web Clipper .md files.
     # Defaults to "77_Claude_Investigate". If set as an absolute path, it wins;
