@@ -157,28 +157,32 @@ def _render_prose_callout(item: dict[str, Any], score: float, is_new: bool) -> s
 
 # ── Quantitative rendering ─────────────────────────────────────────────
 
-def _z_color(z: float | None) -> str:
-    """RGBA: red for positive z (stress/elevation), blue for negative (easing)."""
+def _z_hex(z: float | None) -> str:
+    """Hex color: red spectrum for positive z, blue for negative.
+    Uses hex (not rgba) to avoid YAML comma-parsing ambiguity in chart blocks."""
     if z is None:
-        return "rgba(148,163,184,0.7)"
-    alpha = min(0.9, 0.4 + abs(z) / 4.0)
+        return "#94A3B8"
+    abs_z = abs(z)
     if z >= 0:
-        return f"rgba(239,68,68,{alpha:.2f})"
-    return f"rgba(59,130,246,{alpha:.2f})"
+        return "#B91C1C" if abs_z >= 2 else "#EF4444" if abs_z >= 1 else "#FCA5A5"
+    return "#1D4ED8" if abs_z >= 2 else "#3B82F6" if abs_z >= 1 else "#93C5FD"
 
 
 def _chart_block(labels: list[str], values: list[float], dataset_label: str) -> str:
-    lbl = "[" + ", ".join(f'"{l}"' for l in labels) + "]"
-    dat = "[" + ", ".join(f"{v:.2f}" for v in values) + "]"
-    clr = "[" + ", ".join(f'"{_z_color(v)}"' for v in values) + "]"
+    """Render an Obsidian Charts bar chart using block YAML for color arrays.
+    Block style avoids the YAML parser misreading inline array commas."""
+    lbl_yaml = "[" + ", ".join(labels) + "]"
+    dat_yaml = "[" + ", ".join(f"{v:.2f}" for v in values) + "]"
+    color_lines = "\n".join(f"      - '{_z_hex(v)}'" for v in values)
     return (
         "```chart\n"
         "type: bar\n"
-        f"labels: {lbl}\n"
+        f"labels: {lbl_yaml}\n"
         "datasets:\n"
         f"  - label: \"{dataset_label}\"\n"
-        f"    data: {dat}\n"
-        f"    backgroundColor: {clr}\n"
+        f"    data: {dat_yaml}\n"
+        "    backgroundColor:\n"
+        f"{color_lines}\n"
         "```"
     )
 
@@ -187,23 +191,27 @@ def _new_flag(is_new: bool) -> str:
     return "🆕 " if is_new else ""
 
 
+def _date(item: dict) -> str:
+    return (item.get("published_at") or item.get("ingested_at") or "")[:10]
+
+
 def _render_fred(items: list[tuple[dict, float, bool]]) -> str:
     rows = [
-        "| Date | Series | Value | Δ | z-score | Score |",
-        "|------|--------|-------|---|---------|-------|",
+        "| Date | Series | Latest | Δ | z-score | Score |",
+        "|------|--------|--------|---|---------|-------|",
     ]
     chart_labels, chart_vals = [], []
     for item, score, is_new in items:
-        m     = _parse_meta(item)
-        label = m.get("series_id") or (item.get("title") or "")[:25]
-        val   = f"{m['value']:.4f}"   if m.get("value")  is not None else "—"
-        delta = f"{m['delta']:+.4f}"  if m.get("delta")  is not None else "—"
-        z     = m.get("z_score")
-        z_str = f"{z:+.2f}σ" if z is not None else "—"
-        date  = (item.get("published_at") or item.get("ingested_at") or "")[:10]
-        rows.append(f"| {_new_flag(is_new)}{date} | {label} | {val} | {delta} | {z_str} | {score:.2f} |")
+        m      = _parse_meta(item)
+        # Use human label ("Core PCE YoY") when available, else series_id
+        label  = m.get("label") or m.get("series_id") or (item.get("title") or "")[:25]
+        val    = f"{m['latest_value']:.4f}" if m.get("latest_value") is not None else "—"
+        delta  = f"{m['delta']:+.4f}"       if m.get("delta")        is not None else "—"
+        z      = m.get("z_score")
+        z_str  = f"{z:+.2f}σ" if z is not None else "—"
+        rows.append(f"| {_new_flag(is_new)}{_date(item)} | {label} | {val} | {delta} | {z_str} | {score:.2f} |")
         if z is not None:
-            chart_labels.append(label[:18])
+            chart_labels.append(label[:20])
             chart_vals.append(z)
     parts = ["\n".join(rows)]
     if chart_labels:
@@ -218,15 +226,14 @@ def _render_cboe(items: list[tuple[dict, float, bool]]) -> str:
     ]
     chart_labels, chart_vals = [], []
     for item, score, is_new in items:
-        m      = _parse_meta(item)
-        label  = m.get("symbol") or (item.get("title") or "")[:25]
-        val    = f"{m['value']:.2f}" if m.get("value") is not None else "—"
-        z      = m.get("z_score")
-        z_str  = f"{z:+.2f}σ" if z is not None else "—"
-        date   = (item.get("published_at") or item.get("ingested_at") or "")[:10]
-        rows.append(f"| {_new_flag(is_new)}{date} | {label} | {val} | {z_str} | {score:.2f} |")
+        m     = _parse_meta(item)
+        label = m.get("symbol") or (item.get("title") or "")[:25]
+        val   = f"{m['value']:.2f}" if m.get("value") is not None else "—"
+        z     = m.get("z_score")
+        z_str = f"{z:+.2f}σ" if z is not None else "—"
+        rows.append(f"| {_new_flag(is_new)}{_date(item)} | {label} | {val} | {z_str} | {score:.2f} |")
         if z is not None:
-            chart_labels.append(label[:18])
+            chart_labels.append(label[:20])
             chart_vals.append(z)
     parts = ["\n".join(rows)]
     if chart_labels:
@@ -236,20 +243,20 @@ def _render_cboe(items: list[tuple[dict, float, bool]]) -> str:
 
 def _render_cftc(items: list[tuple[dict, float, bool]]) -> str:
     rows = [
-        "| Date | Commodity | Net Position | z-score | Score |",
-        "|------|-----------|-------------|---------|-------|",
+        "| Date | Contract | Net Position | Wk Chg | z-score | Score |",
+        "|------|----------|-------------|--------|---------|-------|",
     ]
     chart_labels, chart_vals = [], []
     for item, score, is_new in items:
         m       = _parse_meta(item)
-        label   = m.get("commodity") or (item.get("title") or "")[:25]
+        label   = m.get("contract") or (item.get("title") or "")[:25]
         net_pos = f"{int(m['net_position']):,}" if m.get("net_position") is not None else "—"
+        wk_chg  = f"{int(m['weekly_change']):+,}" if m.get("weekly_change") is not None else "—"
         z       = m.get("z_score")
         z_str   = f"{z:+.2f}σ" if z is not None else "—"
-        date    = (item.get("published_at") or item.get("ingested_at") or "")[:10]
-        rows.append(f"| {_new_flag(is_new)}{date} | {label} | {net_pos} | {z_str} | {score:.2f} |")
+        rows.append(f"| {_new_flag(is_new)}{_date(item)} | {label} | {net_pos} | {wk_chg} | {z_str} | {score:.2f} |")
         if z is not None:
-            chart_labels.append(label[:18])
+            chart_labels.append(label[:20])
             chart_vals.append(z)
     parts = ["\n".join(rows)]
     if chart_labels:
@@ -259,57 +266,48 @@ def _render_cftc(items: list[tuple[dict, float, bool]]) -> str:
 
 def _render_yahoo(items: list[tuple[dict, float, bool]]) -> str:
     rows = [
-        "| Date | Ticker | Change % | RSI | Signal | Score |",
-        "|------|--------|----------|-----|--------|-------|",
+        "| Date | Ticker | Price | Change % | RSI-14 | Score |",
+        "|------|--------|-------|----------|--------|-------|",
     ]
     for item, score, is_new in items:
         m      = _parse_meta(item)
         ticker = m.get("ticker") or (item.get("title") or "")[:15]
-        pct    = f"{m['price_change_pct']:+.2f}%" if m.get("price_change_pct") is not None else "—"
-        rsi    = f"{m['rsi']:.0f}" if m.get("rsi") is not None else "—"
-        sig    = m.get("signal") or "—"
-        date   = (item.get("published_at") or item.get("ingested_at") or "")[:10]
-        rows.append(f"| {_new_flag(is_new)}{date} | {ticker} | {pct} | {rsi} | {sig} | {score:.2f} |")
+        price  = f"${m['price']:.2f}"       if m.get("price")      is not None else "—"
+        pct    = f"{m['pct_change']:+.2f}%" if m.get("pct_change") is not None else "—"
+        rsi    = f"{m['rsi14']:.1f}"        if m.get("rsi14")      is not None else "—"
+        rows.append(f"| {_new_flag(is_new)}{_date(item)} | {ticker} | {price} | {pct} | {rsi} | {score:.2f} |")
     return "\n".join(rows)
 
 
 def _render_insider(items: list[tuple[dict, float, bool]]) -> str:
     rows = [
-        "| Date | Ticker | Insider | Type | Value | Score |",
-        "|------|--------|---------|------|-------|-------|",
+        "| Date | Ticker | Insider | Role | Action | Value | Score |",
+        "|------|--------|---------|------|--------|-------|-------|",
     ]
     for item, score, is_new in items:
         m      = _parse_meta(item)
         ticker = m.get("ticker") or "?"
-        name   = (m.get("insider_name") or "?")[:22]
-        txn    = m.get("transaction_type") or "?"
-        val    = f"${m['value']:,.0f}" if m.get("value") is not None else "—"
-        date   = (item.get("published_at") or item.get("ingested_at") or "")[:10]
-        rows.append(f"| {_new_flag(is_new)}{date} | {ticker} | {name} | {txn} | {val} | {score:.2f} |")
+        name   = (m.get("owner") or "?")[:20]
+        role   = (m.get("role") or "?")[:20]
+        action = m.get("action") or "?"
+        val    = f"${m['value_usd']:,.0f}" if m.get("value_usd") is not None else "—"
+        rows.append(f"| {_new_flag(is_new)}{_date(item)} | {ticker} | {name} | {role} | {action} | {val} | {score:.2f} |")
     return "\n".join(rows)
 
 
 def _render_ftd(items: list[tuple[dict, float, bool]]) -> str:
+    # FTD has no z_score — show shares + dollar value, no chart
     rows = [
-        "| Date | Ticker | FTD Shares | z-score | Score |",
-        "|------|--------|-----------|---------|-------|",
+        "| Date | Ticker | Shares (FTD) | Value (USD) | Score |",
+        "|------|--------|-------------|-------------|-------|",
     ]
-    chart_labels, chart_vals = [], []
     for item, score, is_new in items:
         m      = _parse_meta(item)
         ticker = m.get("ticker") or (item.get("title") or "")[:15]
-        shares = f"{int(m['ftd_shares']):,}" if m.get("ftd_shares") is not None else "—"
-        z      = m.get("z_score")
-        z_str  = f"{z:+.2f}σ" if z is not None else "—"
-        date   = (item.get("published_at") or item.get("ingested_at") or "")[:10]
-        rows.append(f"| {_new_flag(is_new)}{date} | {ticker} | {shares} | {z_str} | {score:.2f} |")
-        if z is not None:
-            chart_labels.append(ticker[:18])
-            chart_vals.append(z)
-    parts = ["\n".join(rows)]
-    if chart_labels:
-        parts.append(_chart_block(chart_labels, chart_vals, "z-score (FTD)"))
-    return "\n\n".join(parts)
+        shares = f"{int(m['qty_shares']):,}" if m.get("qty_shares") is not None else "—"
+        val    = f"${m['value_usd']:,.0f}"   if m.get("value_usd") is not None else "—"
+        rows.append(f"| {_new_flag(is_new)}{_date(item)} | {ticker} | {shares} | {val} | {score:.2f} |")
+    return "\n".join(rows)
 
 
 _QUANT_RENDERERS = {
