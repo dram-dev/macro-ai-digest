@@ -88,6 +88,12 @@ MIGRATIONS = [
     "ALTER TABLE items ADD COLUMN obsidian_written_at TEXT",
     "CREATE INDEX IF NOT EXISTS idx_items_triage ON items(triage_decision)",
     "CREATE INDEX IF NOT EXISTS idx_items_obsidian ON items(obsidian_written_at)",
+    # Phase 4: connection threads + weekly synthesis
+    """CREATE TABLE IF NOT EXISTS daily_connections (
+        date         TEXT PRIMARY KEY,
+        threads_json TEXT NOT NULL,
+        generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
 ]
 
 
@@ -413,6 +419,44 @@ def topics_with_summaries() -> list[str]:
     """
     with get_conn() as conn:
         return [row["topic"] for row in conn.execute(sql).fetchall()]
+
+
+def items_for_week(monday_iso: str, sunday_iso: str) -> list[sqlite3.Row]:
+    """Summarized items ingested during a Mon–Sun week, sorted by triage score desc."""
+    sql = """
+        SELECT id, source, url, title, author,
+               published_at, ingested_at, topic,
+               summary, why_it_matters, confidence, see_also, triage_score
+        FROM items
+        WHERE triage_decision = 'keep'
+          AND summary IS NOT NULL
+          AND date(ingested_at) BETWEEN date(?) AND date(?)
+        ORDER BY triage_score DESC
+    """
+    with get_conn() as conn:
+        return conn.execute(sql, (monday_iso, sunday_iso)).fetchall()
+
+
+def upsert_connections(date_iso: str, threads_json: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO daily_connections (date, threads_json) VALUES (?, ?)",
+            (date_iso, threads_json),
+        )
+
+
+def get_connections(date_iso: str) -> list:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT threads_json FROM daily_connections WHERE date = ?",
+            (date_iso,),
+        ).fetchone()
+    if not row:
+        return []
+    try:
+        return json.loads(row["threads_json"]) or []
+    except (json.JSONDecodeError, KeyError):
+        return []
 
 
 def mark_published(item_ids: list[int]) -> None:

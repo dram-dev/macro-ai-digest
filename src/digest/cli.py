@@ -28,6 +28,8 @@ INGESTORS = {
     "gmail": "digest.ingest.gmail:GmailIngestor",
     "reddit": "digest.ingest.reddit:RedditIngestor",
     "rss": "digest.ingest.rss:RSSIngestor",
+    "substack": "digest.ingest.substack:SubstackIngestor",
+    "arxiv": "digest.ingest.arxiv:ArXivIngestor",
     "edgar": "digest.ingest.edgar:EdgarIngestor",
     "fred": "digest.ingest.fred:FREDIngestor",
     "hn": "digest.ingest.hackernews:HNIngestor",
@@ -198,6 +200,15 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
         f"  [green]✓[/green] succeeded={s['succeeded']} failed={s['failed']} ready={s['ready']}"
     )
 
+    # Stage 3c — cross-item connection detection (best-effort, non-blocking)
+    console.rule("[bold cyan]stage 3c: connections")
+    try:
+        from digest.connections import run_connections
+        threads = run_connections()
+        console.print(f"  [green]✓[/green] {len(threads)} connection threads found")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [yellow]⚠[/yellow] connections skipped: {exc}")
+
     # Stage 4 — write to Obsidian
     if skip_publish:
         console.rule("[bold yellow]stage 4: publish (skipped)")
@@ -251,6 +262,30 @@ def publish(date_iso: str | None, topics_only: bool) -> None:
             f"topic_archives={result['topic_archives']}"
         )
         console.print(f"  [dim]→ {result['daily_path']}[/dim]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [red]✗[/red] {exc}")
+
+
+@main.command()
+@click.option(
+    "--date",
+    "date_iso",
+    default=None,
+    help="Any date in the target week YYYY-MM-DD (default: today UTC)",
+)
+def weekly(date_iso: str | None) -> None:
+    """Generate weekly synthesis note in Obsidian."""
+    from digest.obsidian import publish_weekly
+
+    db.init_db()
+    console.rule("[bold cyan]weekly digest")
+    try:
+        result = publish_weekly(date_iso=date_iso)
+        console.print(
+            f"  [green]✓[/green] week={result['week']} "
+            f"items={result['item_count']} themes={result['theme_count']}"
+        )
+        console.print(f"  [dim]→ {result['path']}[/dim]")
     except Exception as exc:  # noqa: BLE001
         console.print(f"  [red]✗[/red] {exc}")
 

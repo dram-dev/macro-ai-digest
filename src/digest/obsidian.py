@@ -23,7 +23,7 @@ import re
 import sqlite3
 import urllib.parse
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -80,6 +80,7 @@ class Paths:
     digest_root: Path
     daily_dir: Path
     topics_dir: Path
+    weekly_dir: Path
     meta_dir: Path
 
     @classmethod
@@ -100,11 +101,12 @@ class Paths:
             digest_root=digest_root,
             daily_dir=digest_root / "Daily",
             topics_dir=digest_root / "Topics",
+            weekly_dir=digest_root / "Weekly",
             meta_dir=digest_root / "_meta",
         )
 
     def ensure(self) -> None:
-        for p in (self.digest_root, self.daily_dir, self.topics_dir, self.meta_dir):
+        for p in (self.digest_root, self.daily_dir, self.topics_dir, self.weekly_dir, self.meta_dir):
             p.mkdir(parents=True, exist_ok=True)
 
 
@@ -310,6 +312,28 @@ def render_daily_note(date_iso: str) -> tuple[str, list[int]]:
         lines.append("_No items kept by triage on this date._")
         lines.append("")
         return "\n".join(lines), item_ids
+
+    # ── Connection threads (cross-item synthesis) ─────────────────────
+    threads = db.get_connections(date_iso)
+    if threads:
+        lines.append("## Connection Threads")
+        lines.append("")
+        lines.append(
+            "_Cross-item patterns identified by Claude. Numbers are item IDs "
+            "— click the `#id` link on any item below to open a seeded chat._"
+        )
+        lines.append("")
+        for thread in threads:
+            theme = (thread.get("theme") or "").strip()
+            insight = (thread.get("insight") or "").strip()
+            ids = thread.get("item_ids") or []
+            id_refs = " · ".join(f"`#{i}`" for i in ids)
+            if theme:
+                lines.append(f"**{theme}** — {id_refs}")
+                lines.append("")
+            if insight:
+                lines.append(insight)
+                lines.append("")
 
     # ── Clipped-for-investigation section (always on top) ────────────
     if clipped_rows:
@@ -546,4 +570,157 @@ def publish(date_iso: str | None = None) -> dict[str, int | str]:
         "daily_items": daily_count,
         "topic_archives": len(topic_results),
         "items_stamped": len(stamped),
+    }
+
+
+# ── Weekly note ────────────────────────────────────────────────────────
+
+
+def _week_bounds(ref_date: date) -> tuple[date, date]:
+    """Return (monday, sunday) for the ISO week containing ref_date."""
+    monday = ref_date - timedelta(days=ref_date.weekday())
+    return monday, monday + timedelta(days=6)
+
+
+def render_weekly_note(
+    week_iso: str,
+    monday: date,
+    sunday: date,
+    synthesis: dict,
+    rows: list[sqlite3.Row],
+) -> str:
+    """Build the Markdown for a weekly digest note."""
+    period = f"{monday.isoformat()} – {sunday.isoformat()}"
+    front = {
+        "week": week_iso,
+        "period": period,
+        "kind": "digest-weekly",
+        "item_count": len(rows),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    lines: list[str] = ["---", yaml.safe_dump(front, sort_keys=False).strip(), "---", ""]
+    lines.append(f"# Weekly Digest — {week_iso}")
+    lines.append(f"_{period}_")
+    lines.append("")
+
+    if not rows:
+        lines.append("_No summarized items this week._")
+        return "\n".join(lines).rstrip() + "\n"
+
+    # ── Themes ──────────────────────────────────────────────────────
+    themes = synthesis.get("themes") or []
+    if themes:
+        lines.append("## Themes of the Week")
+        lines.append("")
+        for i, t in enumerate(themes, 1):
+            title = (t.get("title") or "").strip()
+            desc = (t.get("description") or "").strip()
+            lines.append(f"**{i}. {title}**")
+            lines.append("")
+            lines.append(desc)
+            lines.append("")
+
+    # ── Must-reads ──────────────────────────────────────────────────
+    must_reads = synthesis.get("must_reads") or []
+    if must_reads:
+        # Build a lookup by item ID for quick access
+        row_by_id = {r["id"]: r for r in rows}
+        lines.append("## Must-Reads")
+        lines.append("")
+        for mr in must_reads:
+            item_id = mr.get("item_id")
+            reason = (mr.get("reason") or "").strip()
+            row = row_by_id.get(item_id)
+            if row:
+                title = _safe(row["title"]) or "(untitled)"
+                url = _safe(row["url"])
+                link = f"[{title}]({url})" if url else title
+                topic = topic_label(row["topic"] or "other")
+                lines.append(f"- **{link}** _{topic}_ — {reason}")
+            else:
+                lines.append(f"- item #{item_id} — {reason}")
+        lines.append("")
+
+    # ── Contrarian signal ────────────────────────────────────────────
+    contrarian = (synthesis.get("contrarian_signal") or "").strip()
+    if contrarian:
+        lines.append("## Contrarian Signal")
+        lines.append("")
+        lines.append(f"> {contrarian}")
+        lines.append("")
+
+    # ── Macro-AI intersection ────────────────────────────────────────
+    macro_ai = (synthesis.get("macro_ai_intersection") or "").strip()
+    if macro_ai:
+        lines.append("## Macro-AI Intersection")
+        lines.append("")
+        lines.append(f"> {macro_ai}")
+        lines.append("")
+
+    # ── All items grouped by topic ───────────────────────────────────
+    groups = _group_by_topic(list(rows))
+    lines.append("## All Items This Week")
+    lines.append("")
+    for slug in TOPIC_ORDER:
+        topic_rows = groups.get(slug)
+        if not topic_rows:
+            continue
+        lines.append(f"### {topic_label(slug)}  &nbsp;·&nbsp; {_wikilink(slug)}")
+        lines.append("")
+        for row in topic_rows:
+            lines.append(_render_summary_item(row))
+            lines.append("")
+    leftover = [s for s in groups if s not in TOPIC_ORDER]
+    for slug in sorted(leftover):
+        lines.append(f"### {topic_label(slug)}")
+        lines.append("")
+        for row in groups[slug]:
+            lines.append(_render_summary_item(row))
+            lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def publish_weekly(date_iso: str | None = None) -> dict:
+    """Generate and write the weekly digest note for the week containing date_iso.
+
+    Args:
+        date_iso: any YYYY-MM-DD within the target week. Defaults to today (UTC).
+
+    Returns:
+        dict with keys: week, path, item_count, theme_count.
+    """
+    from digest.weekly import synthesize_week
+
+    if date_iso is None:
+        date_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    ref = date.fromisoformat(date_iso)
+    monday, sunday = _week_bounds(ref)
+    week_iso = monday.strftime("%G-W%V")
+    week_label = f"{week_iso} ({monday.isoformat()} – {sunday.isoformat()})"
+
+    rows = db.items_for_week(monday.isoformat(), sunday.isoformat())
+    logger.info("weekly: %d items for %s", len(rows), week_iso)
+
+    synthesis = synthesize_week(rows, week_label) if rows else {}
+
+    paths = Paths.resolve()
+    paths.ensure()
+
+    text = render_weekly_note(week_iso, monday, sunday, synthesis, rows)
+    target = paths.weekly_dir / f"{week_iso}.md"
+    target.write_text(text, encoding="utf-8")
+    logger.info("obsidian: wrote weekly %s (%d items)", target.name, len(rows))
+
+    append_run_log(
+        paths,
+        f"weekly {week_iso}: {len(rows)} items, {len(synthesis.get('themes') or [])} themes",
+    )
+
+    return {
+        "week": week_iso,
+        "path": str(target),
+        "item_count": len(rows),
+        "theme_count": len(synthesis.get("themes") or []),
     }
