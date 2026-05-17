@@ -282,8 +282,15 @@ def _group_by_topic(rows: list[sqlite3.Row]) -> dict[str, list[sqlite3.Row]]:
     return groups
 
 
-def render_daily_note(date_iso: str) -> tuple[str, list[int]]:
-    """Build the markdown for a daily note. Returns (text, list of item IDs touched)."""
+def render_daily_note(
+    date_iso: str,
+    market_snapshot_md: str = "",
+) -> tuple[str, list[int]]:
+    """Build the markdown for a daily note. Returns (text, list of item IDs touched).
+
+    market_snapshot_md: pre-rendered ## Market Snapshot section (Obsidian Charts
+    blocks + PNG embed). Pass empty string to omit the section.
+    """
     bundle = db.items_for_publish(date_iso)
     summarized = bundle["summarized"]
     kept_unsum = bundle["kept_unsummarized"]
@@ -307,6 +314,13 @@ def render_daily_note(date_iso: str) -> tuple[str, list[int]]:
     lines: list[str] = ["---", yaml.safe_dump(front, sort_keys=False).strip(), "---", ""]
     lines.append(f"# Digest — {date_iso}")
     lines.append("")
+
+    # ── Market Snapshot (charts) ─────────────────────────────────────────
+    if market_snapshot_md:
+        lines.append("## Market Snapshot")
+        lines.append("")
+        lines.append(market_snapshot_md)
+        lines.append("")
 
     if not summarized and not kept_unsum:
         lines.append("_No items kept by triage on this date._")
@@ -390,7 +404,32 @@ def render_daily_note(date_iso: str) -> tuple[str, list[int]]:
 
 def write_daily_note(date_iso: str, paths: Paths) -> tuple[Path, int]:
     """Write the daily note. Returns (path_written, num_items)."""
-    text, item_ids = render_daily_note(date_iso)
+    from digest.charts import build_obsidian_charts, render_png
+
+    assets_dir = paths.digest_root / "assets"
+    snapshot_parts: list[str] = []
+
+    try:
+        plugin_charts = build_obsidian_charts(date_iso)
+        if plugin_charts:
+            snapshot_parts.append("### Plugin Charts *(requires Obsidian Charts)*")
+            snapshot_parts.append("")
+            snapshot_parts.append(plugin_charts)
+    except Exception as exc:
+        logger.warning("charts: obsidian chart build failed: %s", exc)
+
+    try:
+        png_embed = render_png(date_iso, assets_dir)
+        if png_embed:
+            snapshot_parts.append("### PNG Snapshot *(always renders)*")
+            snapshot_parts.append("")
+            snapshot_parts.append(png_embed)
+    except Exception as exc:
+        logger.warning("charts: PNG render failed: %s", exc)
+
+    market_snapshot_md = "\n".join(snapshot_parts)
+
+    text, item_ids = render_daily_note(date_iso, market_snapshot_md=market_snapshot_md)
     target = paths.daily_dir / f"{date_iso}.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")

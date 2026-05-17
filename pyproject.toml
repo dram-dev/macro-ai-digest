@@ -20,6 +20,7 @@ dependencies = [
     "rich>=13.7",
     "click>=8.1",
     "yfinance>=0.2",
+    "matplotlib>=3.9",
 ]
 
 [project.scripts]
