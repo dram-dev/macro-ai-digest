@@ -121,5 +121,44 @@ def init_db_cmd() -> None:
     console.print(f"[green]✓[/green] DB initialized at {settings.db_path}")
 
 
+@main.command()
+@click.option(
+    "--no-network",
+    is_flag=True,
+    help="Skip live API probes; run local checks only.",
+)
+def health(no_network: bool) -> None:
+    """Report app health: local state + live API probes. Exits non-zero on FAIL."""
+    from digest import health as health_mod
+
+    results = health_mod.run_all(include_network=not no_network)
+
+    status_render = {
+        health_mod.Status.PASS: "[green]✓ PASS[/green]",
+        health_mod.Status.WARN: "[yellow]⚠ WARN[/yellow]",
+        health_mod.Status.FAIL: "[red]✗ FAIL[/red]",
+    }
+
+    table = Table(title="digest health")
+    table.add_column("Category", style="dim")
+    table.add_column("Check")
+    table.add_column("Status")
+    table.add_column("Detail")
+    for r in results:
+        table.add_row(r.category, r.name, status_render[r.status], r.detail)
+    console.print(table)
+
+    n_fail = sum(1 for r in results if r.status == health_mod.Status.FAIL)
+    n_warn = sum(1 for r in results if r.status == health_mod.Status.WARN)
+    n_pass = sum(1 for r in results if r.status == health_mod.Status.PASS)
+    console.print(
+        f"[green]{n_pass} pass[/green]  "
+        f"[yellow]{n_warn} warn[/yellow]  "
+        f"[red]{n_fail} fail[/red]"
+    )
+    if n_fail:
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     sys.exit(main())
