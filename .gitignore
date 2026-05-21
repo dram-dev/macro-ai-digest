@@ -30,8 +30,10 @@ build/
 # Logs
 logs/
 
-# Claude Code session files
+# Claude Code session files (keep custom commands)
 .claude/
+!.claude/commands/
+!.claude/commands/**
 
 # OS
 .DS_Store

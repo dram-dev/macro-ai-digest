@@ -460,6 +460,90 @@ def essay(date_iso: str | None) -> None:
 
 
 @main.command()
+def health() -> None:
+    """Check status of all app subsystems (DB, Ollama, MLX, vault, launchd, env)."""
+    from digest.health import run_health, overall_status
+
+    db.init_db()
+    console.rule("[bold cyan]app health")
+    report = run_health()
+    overall = overall_status(report)
+    _STATUS_COLOR = {"ok": "green", "warn": "yellow", "fail": "red"}
+    _STATUS_ICON  = {"ok": "✓", "warn": "⚠", "fail": "✗"}
+
+    for component, result in report.items():
+        s     = result["status"]
+        color = _STATUS_COLOR[s]
+        icon  = _STATUS_ICON[s]
+        details = result.get("details", {})
+        detail_str = "  ".join(f"{k}={v}" for k, v in details.items() if k != "jobs")
+        console.print(f"  [{color}]{icon}[/{color}] [bold]{component}[/bold]  [dim]{detail_str[:100]}[/dim]")
+        # Launchd jobs get their own sub-lines
+        if "jobs" in details:
+            for label, jinfo in details["jobs"].items():
+                short = label.replace("com.dr.", "")
+                if jinfo.get("loaded"):
+                    exit_c = jinfo.get("last_exit", "?")
+                    jcolor = "green" if exit_c in ("0", "-") else "red"
+                    console.print(f"       [{jcolor}]{short}[/{jcolor}]  pid={jinfo['pid']}  exit={exit_c}")
+                else:
+                    console.print(f"       [dim]{short}  not loaded[/dim]")
+
+    overall_color = _STATUS_COLOR[overall]
+    console.rule(f"[{overall_color}]overall: {overall}[/{overall_color}]")
+
+
+@main.command()
+def security() -> None:
+    """Run security audit: file permissions, credential scan, subprocess safety, network."""
+    from digest.security import run_security, overall_status
+
+    console.rule("[bold cyan]security audit")
+    report = run_security()
+    overall = overall_status(report)
+    _STATUS_COLOR = {"ok": "green", "warn": "yellow", "fail": "red"}
+    _STATUS_ICON  = {"ok": "✓", "warn": "⚠", "fail": "✗"}
+
+    for check, result in report.items():
+        s      = result["status"]
+        color  = _STATUS_COLOR[s]
+        icon   = _STATUS_ICON[s]
+        issues = result.get("issues", [])
+        details = result.get("details", {})
+
+        # Build a concise summary line
+        if check == "file_permissions":
+            summary = "  ".join(f"{k}: {v}" for k, v in details.items() if isinstance(v, dict))[:80]
+        elif check == "hardcoded_secrets":
+            summary = f"{details.get('count', 0)} findings"
+        elif check == "subprocess_safety":
+            summary = f"{details.get('shell_true_count', 0)} shell=True usages  {details.get('note','')}"
+        elif check == "sql_safety":
+            summary = details.get("note", "")[:80]
+        elif check == "network_exposure":
+            listening = details.get("listening", [])
+            summary = "  ".join(f"{s['service']}:{s['port']} ({s['address']})" for s in listening) or "none listening"
+        elif check == "gitignore":
+            missing = details.get("missing", [])
+            summary = f"missing: {missing}" if missing else "all patterns covered"
+        else:
+            summary = ""
+
+        console.print(f"  [{color}]{icon}[/{color}] [bold]{check}[/bold]  [dim]{summary[:100]}[/dim]")
+        for issue in issues:
+            console.print(f"       [yellow]→[/yellow] {issue}")
+        if check == "network_exposure":
+            for svc in details.get("exposed_to_lan", []):
+                console.print(f"       [yellow]→[/yellow] {svc['service']} exposed on LAN ({svc['address']}) — consider binding to 127.0.0.1")
+        if check == "hardcoded_secrets" and details.get("findings"):
+            for f in details["findings"][:3]:
+                console.print(f"       [red]→[/red] {f['file']}: {f['pattern']}: {f['snippet'][:60]}")
+
+    overall_color = _STATUS_COLOR[overall]
+    console.rule(f"[{overall_color}]overall: {overall}[/{overall_color}]")
+
+
+@main.command()
 def dashboard() -> None:
     """Generate interactive HTML signal dashboard (Plotly.js, self-contained)."""
     from digest.dashboard import generate_dashboard
