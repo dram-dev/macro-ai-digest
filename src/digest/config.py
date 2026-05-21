@@ -84,6 +84,14 @@ class Settings(BaseSettings):
         default="77_Claude_Investigate", alias="OBSIDIAN_CLIP_DIR"
     )
 
+    # Quantitative ingestor thresholds — tune from .env without code changes
+    cboe_sigma_thresh: float = Field(default=1.5, alias="CBOE_SIGMA_THRESH")
+    cftc_sigma_thresh: float = Field(default=1.2, alias="CFTC_SIGMA_THRESH")
+    yahoo_move_thresh_pct: float = Field(default=2.5, alias="YAHOO_MOVE_THRESH_PCT")
+    yahoo_rsi_overbought: float = Field(default=75.0, alias="YAHOO_RSI_OVERBOUGHT")
+    yahoo_rsi_oversold: float = Field(default=28.0, alias="YAHOO_RSI_OVERSOLD")
+    hn_min_points: int = Field(default=100, alias="HN_MIN_POINTS")
+
     # ── Validators ────────────────────────────────────────────────────────
 
     @field_validator("summarizer_model", mode="before")

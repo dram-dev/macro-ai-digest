@@ -215,6 +215,29 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
     except Exception as exc:  # noqa: BLE001
         console.print(f"  [yellow]⚠[/yellow] connections skipped: {exc}")
 
+    # Stage 3d — multi-persona ensemble scoring (best-effort, non-blocking)
+    console.rule("[bold cyan]stage 3d: ensemble scoring")
+    try:
+        from digest.ensemble import run_ensemble
+        ec = run_ensemble()
+        console.print(
+            f"  [green]✓[/green] ensemble: succeeded={ec['succeeded']} failed={ec['failed']}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [yellow]⚠[/yellow] ensemble skipped: {exc}")
+
+    # Stage 3e — quant signal outcome tracking (best-effort, non-blocking)
+    console.rule("[bold cyan]stage 3e: outcomes")
+    try:
+        from digest.outcomes import run_outcomes
+        oc = run_outcomes()
+        console.print(
+            f"  [green]✓[/green] outcomes: confirmed={oc['confirmed']} "
+            f"contradicted={oc['contradicted']} pending={oc['pending']}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [yellow]⚠[/yellow] outcomes skipped: {exc}")
+
     # Stage 4 — write to Obsidian
     if skip_publish:
         console.rule("[bold yellow]stage 4: publish (skipped)")
@@ -351,6 +374,51 @@ def regime() -> None:
 
 
 @main.command()
+@click.option("--limit", default=200, show_default=True, help="Max items to score per run")
+def ensemble(limit: int) -> None:
+    """Run multi-persona Ollama ensemble scoring on summarized items."""
+    from digest.ensemble import run_ensemble
+
+    db.init_db()
+    console.rule("[bold cyan]ensemble")
+    counts = run_ensemble(limit=limit)
+    console.print(
+        f"  [green]✓[/green] ensemble: processed={counts['processed']} "
+        f"succeeded={counts['succeeded']} failed={counts['failed']}"
+    )
+
+
+@main.command()
+@click.option("--horizon", default=7, show_default=True, help="Days after ingestion to check")
+@click.option("--limit", default=500, show_default=True, help="Max items to check")
+def outcomes(horizon: int, limit: int) -> None:
+    """Check FRED/CBOE/CFTC z-score signal outcomes (DB-internal, no API calls)."""
+    from digest.outcomes import run_outcomes
+
+    db.init_db()
+    console.rule("[bold cyan]outcomes")
+    counts = run_outcomes(horizon_days=horizon, limit=limit)
+    console.print(
+        f"  [green]✓[/green] outcomes: checked={counts['checked']} "
+        f"confirmed={counts['confirmed']} contradicted={counts['contradicted']} "
+        f"neutral={counts['neutral']} pending={counts['pending']}"
+    )
+
+
+@main.command()
+def cluster() -> None:
+    """Cluster all summarized items into narrative threads (TF-IDF + KMeans)."""
+    from digest.cluster import run_clustering
+
+    db.init_db()
+    console.rule("[bold cyan]cluster")
+    counts = run_clustering()
+    console.print(
+        f"  [green]✓[/green] cluster: items={counts['items']} clusters={counts['clusters']}"
+    )
+
+
+@main.command()
 @click.option("--top-n", default=100, show_default=True, help="Max items per tier")
 def signals(top_n: int) -> None:
     """Write High / Medium / Low signal leaderboards to Obsidian."""
@@ -363,6 +431,50 @@ def signals(top_n: int) -> None:
         f"  [green]✓[/green] high={counts['high']} medium={counts['medium']} low={counts['low']}"
     )
     console.print(f"  [dim]→ {counts['high'] + counts['medium'] + counts['low']} total items across 3 files[/dim]")
+
+
+@main.command()
+@click.option(
+    "--date",
+    "date_iso",
+    default=None,
+    help="Any YYYY-MM-DD in the target week (default: today UTC)",
+)
+def essay(date_iso: str | None) -> None:
+    """Generate a weekly opinionated essay from this week's raw digest signals."""
+    from digest.essay import generate_essay
+    from datetime import date as _date
+
+    db.init_db()
+    console.rule("[bold cyan]essay")
+    try:
+        ref = _date.fromisoformat(date_iso) if date_iso else None
+        result = generate_essay(ref_date=ref)
+        console.print(
+            f"  [green]✓[/green] week={result['week']} "
+            f"words={result['word_count']} sources={result['source_items']}"
+        )
+        console.print(f"  [dim]→ {result['path']}[/dim]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [red]✗[/red] {exc}")
+
+
+@main.command()
+def dashboard() -> None:
+    """Generate interactive HTML signal dashboard (Plotly.js, self-contained)."""
+    from digest.dashboard import generate_dashboard
+
+    db.init_db()
+    console.rule("[bold cyan]dashboard")
+    try:
+        result = generate_dashboard()
+        console.print(
+            f"  [green]✓[/green] events={result['events']} "
+            f"fred_series={result['fred_series']} yahoo={result['yahoo_series']}"
+        )
+        console.print(f"  [dim]→ {result['path']}[/dim]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [red]✗[/red] {exc}")
 
 
 @main.command("init-db")

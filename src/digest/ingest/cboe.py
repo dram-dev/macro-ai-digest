@@ -13,13 +13,13 @@ from datetime import datetime
 import requests
 
 from digest import db
+from digest.config import settings
 from digest.ingest.base import IngestedItem, IngestorBase
 
 logger = logging.getLogger(__name__)
 
 HEADERS = {"User-Agent": "macro-ai-digest/0.1 (research)"}
 LOOKBACK = 60       # rows used to build baseline
-SIGMA_THRESH = 1.5  # stricter than FRED since VIX is inherently volatile
 
 CBOE_SOURCES = {
     "vix": "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv",
@@ -81,7 +81,7 @@ class CBOEIngestor(IngestorBase):
                     daily_change = latest_close - prev_close
                     z = _z_score(daily_change, recent_changes)
 
-                    if abs(z) >= SIGMA_THRESH:
+                    if abs(z) >= settings.cboe_sigma_thresh:
                         direction = "spike" if daily_change > 0 else "drop"
                         date_str = dates[-1]
                         try:

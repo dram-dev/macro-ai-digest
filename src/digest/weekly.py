@@ -71,12 +71,17 @@ def _parse_synthesis(raw: str) -> dict[str, Any]:
     return {}
 
 
-def synthesize_week(rows: list, week_label: str) -> dict[str, Any]:
+def synthesize_week(
+    rows: list,
+    week_label: str,
+    regime_framing: str = "",
+) -> dict[str, Any]:
     """Call Claude to produce a weekly synthesis over the given item rows.
 
     Args:
         rows: sqlite3.Row list from db.items_for_week(), pre-sorted by triage_score DESC.
         week_label: human label like "2026-W20 (May 11 – May 17)".
+        regime_framing: optional macro regime context injected at prompt top.
 
     Returns:
         Parsed synthesis dict with keys: themes, must_reads, contrarian_signal,
@@ -96,11 +101,12 @@ def synthesize_week(rows: list, week_label: str) -> dict[str, Any]:
             f"  Why: {(row['why_it_matters'] or '')[:150]}"
         )
 
-    prompt = (
-        f"Week: {week_label}\n"
-        f"Total items with summaries: {len(rows)} (showing top {len(top)} by triage score)\n\n"
-        + "\n\n".join(item_lines)
-    )
+    header = f"Week: {week_label}\n"
+    if regime_framing:
+        header += f"Macro regime context: {regime_framing}\n"
+    header += f"Total items with summaries: {len(rows)} (showing top {len(top)} by triage score)\n"
+
+    prompt = header + "\n" + "\n\n".join(item_lines)
 
     try:
         raw = _call_claude(prompt)

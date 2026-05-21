@@ -21,10 +21,6 @@ logger = logging.getLogger(__name__)
 # Tickers whose primary signal is AI semis vs AI capex spend
 SEMIS = {"NVDA", "AMD", "TSM", "ASML", "INTC", "QCOM", "AVGO", "MRVL"}
 
-# Thresholds for item generation
-MOVE_THRESH_PCT = 2.5   # daily % move to always surface
-RSI_OVERBOUGHT = 75.0
-RSI_OVERSOLD = 28.0
 
 
 def _topic_for(ticker: str) -> str:
@@ -37,7 +33,7 @@ def _format_content(ticker: str, snap: dict) -> str:
         lines[0] += f" ({snap['pct_change_1d']:+.1f}% vs prev close)"
     if snap.get("rsi14") is not None:
         rsi_val = snap["rsi14"]
-        flag = " ⚠ overbought" if rsi_val > RSI_OVERBOUGHT else " ⚠ oversold" if rsi_val < RSI_OVERSOLD else ""
+        flag = " ⚠ overbought" if rsi_val > settings.yahoo_rsi_overbought else " ⚠ oversold" if rsi_val < settings.yahoo_rsi_oversold else ""
         lines.append(f"RSI(14): {rsi_val:.1f}{flag}")
     if snap.get("pct_vs_sma50") is not None:
         dist = snap["pct_vs_sma50"]
@@ -84,8 +80,8 @@ class YahooIngestor(IngestorBase):
                 rsi_val = snap.get("rsi14")
 
                 # Only surface significant moves or RSI extremes
-                rsi_extreme = rsi_val is not None and (rsi_val > RSI_OVERBOUGHT or rsi_val < RSI_OVERSOLD)
-                if abs(pct) < MOVE_THRESH_PCT and not rsi_extreme:
+                rsi_extreme = rsi_val is not None and (rsi_val > settings.yahoo_rsi_overbought or rsi_val < settings.yahoo_rsi_oversold)
+                if abs(pct) < settings.yahoo_move_thresh_pct and not rsi_extreme:
                     continue
 
                 latest_date = dates[-1]

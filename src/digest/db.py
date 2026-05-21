@@ -102,6 +102,25 @@ MIGRATIONS = [
         narrative    TEXT NOT NULL,
         generated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )""",
+    # Idea 3: multi-persona ensemble scores
+    "ALTER TABLE items ADD COLUMN ensemble_scores TEXT",
+    "ALTER TABLE items ADD COLUMN ensemble_consensus REAL",
+    "ALTER TABLE items ADD COLUMN ensemble_dispersion REAL",
+    # Idea 1: TF-IDF narrative cluster label
+    "ALTER TABLE items ADD COLUMN cluster_id TEXT",
+    # Idea 2: signal outcome tracking
+    """CREATE TABLE IF NOT EXISTS signal_outcomes (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id      INTEGER NOT NULL REFERENCES items(id),
+        checked_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        horizon_days INTEGER NOT NULL DEFAULT 7,
+        outcome      TEXT NOT NULL,
+        original_z   REAL,
+        followup_z   REAL,
+        magnitude    REAL,
+        UNIQUE(item_id, horizon_days)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_outcomes_item ON signal_outcomes(item_id)",
 ]
 
 
@@ -226,7 +245,8 @@ def items_for_signals() -> list[sqlite3.Row]:
         SELECT id, source, url, title, author,
                published_at, ingested_at,
                topic, summary, why_it_matters, confidence, see_also,
-               triage_score, metadata_json
+               triage_score, metadata_json,
+               ensemble_consensus, ensemble_dispersion, cluster_id
         FROM items
         WHERE triage_decision = 'keep'
           AND summary IS NOT NULL
@@ -246,6 +266,140 @@ def recent_kept_titles(hours: int = 24) -> list[str]:
     with get_conn() as conn:
         rows = conn.execute(sql, (f"-{hours} hours",)).fetchall()
     return [r["title"] for r in rows if r["title"]]
+
+
+def items_needing_ensemble(limit: int = 200) -> list[sqlite3.Row]:
+    """Kept + summarized items with no ensemble score yet."""
+    sql = """
+        SELECT id, source, title, topic, summary, why_it_matters
+        FROM items
+        WHERE triage_decision = 'keep'
+          AND summary IS NOT NULL
+          AND ensemble_consensus IS NULL
+        ORDER BY triage_score DESC, ingested_at DESC
+        LIMIT ?
+    """
+    with get_conn() as conn:
+        return conn.execute(sql, (limit,)).fetchall()
+
+
+def update_ensemble(
+    item_id: int, scores_json: str, consensus: float, dispersion: float
+) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE items
+               SET ensemble_scores = ?, ensemble_consensus = ?, ensemble_dispersion = ?
+               WHERE id = ?""",
+            (scores_json, consensus, dispersion, item_id),
+        )
+
+
+def items_for_clustering() -> list[sqlite3.Row]:
+    """All kept+summarized items for TF-IDF clustering."""
+    sql = """
+        SELECT id, title, summary
+        FROM items
+        WHERE triage_decision = 'keep'
+          AND summary IS NOT NULL
+        ORDER BY ingested_at DESC
+    """
+    with get_conn() as conn:
+        return conn.execute(sql).fetchall()
+
+
+def update_cluster_ids(id_to_label: dict[int, str]) -> None:
+    if not id_to_label:
+        return
+    with get_conn() as conn:
+        for item_id, label in id_to_label.items():
+            conn.execute(
+                "UPDATE items SET cluster_id = ? WHERE id = ?",
+                (label, item_id),
+            )
+
+
+_VALID_OUTCOME_KEYS = frozenset({"series_id", "symbol", "contract"})
+
+
+def items_for_outcome_check(horizon_days: int = 7, limit: int = 500) -> list[sqlite3.Row]:
+    """FRED/CBOE/CFTC kept items old enough to check, with no outcome yet for this horizon."""
+    sql = """
+        SELECT i.id, i.source, i.ingested_at, i.metadata_json
+        FROM items i
+        LEFT JOIN signal_outcomes so ON so.item_id = i.id AND so.horizon_days = ?
+        WHERE i.source IN ('fred', 'cboe', 'cftc')
+          AND i.triage_decision = 'keep'
+          AND i.ingested_at <= datetime('now', ?)
+          AND so.id IS NULL
+          AND json_extract(i.metadata_json, '$.z_score') IS NOT NULL
+        ORDER BY i.ingested_at DESC
+        LIMIT ?
+    """
+    with get_conn() as conn:
+        return conn.execute(sql, (horizon_days, f"-{horizon_days} days", limit)).fetchall()
+
+
+def get_followup_z(
+    source: str, meta_key: str, key_value: str, after_iso: str
+) -> float | None:
+    """Latest z_score for same series/symbol/contract ingested after a given timestamp."""
+    if meta_key not in _VALID_OUTCOME_KEYS:
+        raise ValueError(f"Invalid meta_key: {meta_key!r}")
+    sql = f"""
+        SELECT CAST(json_extract(metadata_json, '$.z_score') AS REAL) AS z_score
+        FROM items
+        WHERE source = ?
+          AND json_extract(metadata_json, '$.{meta_key}') = ?
+          AND ingested_at > ?
+          AND json_extract(metadata_json, '$.z_score') IS NOT NULL
+        ORDER BY ingested_at DESC
+        LIMIT 1
+    """
+    with get_conn() as conn:
+        row = conn.execute(sql, (source, key_value, after_iso)).fetchone()
+    return float(row["z_score"]) if row else None
+
+
+def upsert_outcome(
+    item_id: int,
+    horizon_days: int,
+    outcome: str,
+    original_z: float | None,
+    followup_z: float | None,
+    magnitude: float | None,
+) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO signal_outcomes
+               (item_id, horizon_days, outcome, original_z, followup_z, magnitude)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (item_id, horizon_days, outcome, original_z, followup_z, magnitude),
+        )
+
+
+def get_outcomes(item_ids: list[int]) -> dict[int, sqlite3.Row]:
+    """Return outcome rows keyed by item_id (7-day horizon, most recent check)."""
+    if not item_ids:
+        return {}
+    placeholders = ",".join("?" for _ in item_ids)
+    sql = f"""
+        SELECT item_id, outcome, original_z, followup_z, magnitude
+        FROM signal_outcomes
+        WHERE item_id IN ({placeholders})
+          AND horizon_days = 7
+        ORDER BY checked_at DESC
+    """
+    with get_conn() as conn:
+        rows = conn.execute(sql, tuple(item_ids)).fetchall()
+    seen: set[int] = set()
+    result: dict[int, sqlite3.Row] = {}
+    for row in rows:
+        iid = row["item_id"]
+        if iid not in seen:
+            result[iid] = row
+            seen.add(iid)
+    return result
 
 
 def items_ready_for_summary(
@@ -591,6 +745,46 @@ def upsert_regime(week_iso: str, regime: str, signals_json: str, narrative: str)
                VALUES (?, ?, ?, ?)""",
             (week_iso, regime, signals_json, narrative),
         )
+
+
+def items_for_essay(start_iso: str, end_iso: str, limit: int = 40) -> list[sqlite3.Row]:
+    """Top-scored kept items in a date range, returning raw content for the essay agent.
+
+    Reads the content field (original source material), not AI-generated summaries,
+    so the essay writer works from primary sources regardless of summarization status.
+    """
+    sql = """
+        SELECT id, source, title, author, url, content,
+               published_at, ingested_at, topic, triage_score, metadata_json
+        FROM items
+        WHERE triage_decision = 'keep'
+          AND date(ingested_at) BETWEEN date(?) AND date(?)
+          AND content IS NOT NULL
+          AND content != ''
+        ORDER BY triage_score DESC, ingested_at DESC
+        LIMIT ?
+    """
+    with get_conn() as conn:
+        return conn.execute(sql, (start_iso, end_iso, limit)).fetchall()
+
+
+def connections_for_range(start_iso: str, end_iso: str) -> list[dict]:
+    """All daily connection threads in a date range, newest first."""
+    sql = """
+        SELECT date, threads_json FROM daily_connections
+        WHERE date BETWEEN ? AND ?
+        ORDER BY date DESC
+    """
+    with get_conn() as conn:
+        rows = conn.execute(sql, (start_iso, end_iso)).fetchall()
+    result: list[dict] = []
+    for row in rows:
+        try:
+            threads = json.loads(row["threads_json"]) or []
+            result.extend(threads)
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return result
 
 
 def get_latest_regime() -> sqlite3.Row | None:

@@ -324,7 +324,7 @@ BACKENDS = {
 # ── Public API ─────────────────────────────────────────────────────────
 
 
-def summarize_item(item: dict[str, Any]) -> SummaryOutput:
+def summarize_item(item: dict[str, Any], regime_framing: str = "") -> SummaryOutput:
     """Summarize one item using the configured backend. Raises BackendError on failure."""
     backend_name = settings.summarizer_backend
     backend_fn = BACKENDS.get(backend_name)
@@ -335,6 +335,8 @@ def summarize_item(item: dict[str, Any]) -> SummaryOutput:
         )
 
     user_prompt = _build_user_prompt(item)
+    if regime_framing:
+        user_prompt = f"[Macro regime: {regime_framing}]\n\n{user_prompt}"
     raw = backend_fn(user_prompt)
     parsed = _extract_json(raw)
     if not parsed:
@@ -373,6 +375,17 @@ def run_summarize(
         return {"ready": 0, "succeeded": 0, "failed": 0}
 
     backend = settings.summarizer_backend
+
+    # Fetch regime framing once for this batch (single DB lookup, not per-item)
+    regime_framing = ""
+    try:
+        from digest.macro_regime import get_current_framing
+        regime_framing = get_current_framing()
+        if regime_framing:
+            logger.info("summarize: applying macro regime framing")
+    except Exception:
+        pass
+
     counts = {"ready": len(rows), "succeeded": 0, "failed": 0}
     for row in rows:
         item = dict(row)
@@ -384,7 +397,7 @@ def run_summarize(
         output_chars = 0
 
         try:
-            output = summarize_item(item)
+            output = summarize_item(item, regime_framing=regime_framing)
             db.update_summary(
                 item_id=item_id,
                 topic=output.topic,

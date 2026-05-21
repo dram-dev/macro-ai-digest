@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,13 @@ TOPIC_CALLOUT: dict[str, str] = {
     "ai_business_apps": "example",
     "data_viz":         "success",
     "other":            "note",
+}
+
+_OUTCOME_EMOJI: dict[str, str] = {
+    "confirmed":    "✅",
+    "contradicted": "❌",
+    "neutral":      "⚖️",
+    "pending":      "⏳",
 }
 
 TIER_EMOJI  = {"high": "🔴", "medium": "🟡", "low": "🔵"}
@@ -135,10 +143,22 @@ def _render_prose_callout(item: dict[str, Any], score: float, is_new: bool) -> s
     why          = (item.get("why_it_matters") or "").strip()
     see_also     = _parse_see_also(item.get("see_also"))
 
+    # Ensemble badge: consensus score ± dispersion across 4 analyst personas
+    consensus  = item.get("ensemble_consensus")
+    dispersion = item.get("ensemble_dispersion")
+    ens_str    = ""
+    if consensus is not None:
+        disp_part = f" ±{dispersion:.2f}" if dispersion is not None else ""
+        ens_str   = f" · 🤝 {consensus:.2f}{disp_part}"
+
+    # Cluster badge: narrative thread label from TF-IDF clustering
+    cluster_id  = item.get("cluster_id")
+    cluster_str = f" · 🏷 `{cluster_id}`" if cluster_id else ""
+
     link_part = f" · [→]({url})" if url else ""
     meta_line = (
-        f"> `{topic}` · `{confidence}` · `⭐ {score:.2f}` "
-        f"· {src_label} · {date_str}{link_part}"
+        f"> `{topic}` · `{confidence}` · `⭐ {score:.2f}`{ens_str}{cluster_str}"
+        f" · {src_label} · {date_str}{link_part}"
     )
 
     lines = [
@@ -158,8 +178,7 @@ def _render_prose_callout(item: dict[str, Any], score: float, is_new: bool) -> s
 # ── Quantitative rendering ─────────────────────────────────────────────
 
 def _z_hex(z: float | None) -> str:
-    """Hex color: red spectrum for positive z, blue for negative.
-    Uses hex (not rgba) to avoid YAML comma-parsing ambiguity in chart blocks."""
+    """Hex color: red spectrum for positive z, blue for negative."""
     if z is None:
         return "#94A3B8"
     abs_z = abs(z)
@@ -169,11 +188,7 @@ def _z_hex(z: float | None) -> str:
 
 
 def _chart_block(labels: list[str], values: list[float], dataset_label: str) -> str:
-    """Render a Mermaid xychart-beta bar chart.
-
-    Works natively in Obsidian 1.4+ — no plugin required.
-    Positive z-scores (stress/elevation) extend upward; negative (easing) downward.
-    """
+    """Render a Mermaid xychart-beta bar chart (native Obsidian 1.4+, no plugin)."""
     max_abs = max((abs(v) for v in values), default=3.0)
     y_max   = max(3.0, round(max_abs + 0.5, 1))
     lbl     = "[" + ", ".join(f'"{l}"' for l in labels) + "]"
@@ -197,21 +212,35 @@ def _date(item: dict) -> str:
     return (item.get("published_at") or item.get("ingested_at") or "")[:10]
 
 
-def _render_fred(items: list[tuple[dict, float, bool]]) -> str:
+def _outcome_cell(item_id: int | None, outcomes: dict | None) -> str:
+    if not outcomes or item_id is None:
+        return "—"
+    row = outcomes.get(item_id)
+    if row is None:
+        return "—"
+    return _OUTCOME_EMOJI.get(row["outcome"], "—")
+
+
+def _render_fred(
+    items: list[tuple[dict, float, bool]], outcomes: dict | None = None
+) -> str:
     rows = [
-        "| Date | Series | Latest | Δ | z-score | Score |",
-        "|------|--------|--------|---|---------|-------|",
+        "| Date | Series | Latest | Δ | z-score | Out | Score |",
+        "|------|--------|--------|---|---------|-----|-------|",
     ]
     chart_labels, chart_vals = [], []
     for item, score, is_new in items:
-        m      = _parse_meta(item)
-        # Use human label ("Core PCE YoY") when available, else series_id
-        label  = m.get("label") or m.get("series_id") or (item.get("title") or "")[:25]
-        val    = f"{m['latest_value']:.4f}" if m.get("latest_value") is not None else "—"
-        delta  = f"{m['delta']:+.4f}"       if m.get("delta")        is not None else "—"
-        z      = m.get("z_score")
-        z_str  = f"{z:+.2f}σ" if z is not None else "—"
-        rows.append(f"| {_new_flag(is_new)}{_date(item)} | {label} | {val} | {delta} | {z_str} | {score:.2f} |")
+        m     = _parse_meta(item)
+        label = m.get("label") or m.get("series_id") or (item.get("title") or "")[:25]
+        val   = f"{m['latest_value']:.4f}" if m.get("latest_value") is not None else "—"
+        delta = f"{m['delta']:+.4f}"       if m.get("delta")        is not None else "—"
+        z     = m.get("z_score")
+        z_str = f"{z:+.2f}σ" if z is not None else "—"
+        out   = _outcome_cell(item.get("id"), outcomes)
+        rows.append(
+            f"| {_new_flag(is_new)}{_date(item)} | {label} | {val} | {delta} "
+            f"| {z_str} | {out} | {score:.2f} |"
+        )
         if z is not None:
             chart_labels.append(label[:20])
             chart_vals.append(z)
@@ -221,10 +250,12 @@ def _render_fred(items: list[tuple[dict, float, bool]]) -> str:
     return "\n\n".join(parts)
 
 
-def _render_cboe(items: list[tuple[dict, float, bool]]) -> str:
+def _render_cboe(
+    items: list[tuple[dict, float, bool]], outcomes: dict | None = None
+) -> str:
     rows = [
-        "| Date | Symbol | Value | z-score | Score |",
-        "|------|--------|-------|---------|-------|",
+        "| Date | Symbol | Value | z-score | Out | Score |",
+        "|------|--------|-------|---------|-----|-------|",
     ]
     chart_labels, chart_vals = [], []
     for item, score, is_new in items:
@@ -233,7 +264,10 @@ def _render_cboe(items: list[tuple[dict, float, bool]]) -> str:
         val   = f"{m['value']:.2f}" if m.get("value") is not None else "—"
         z     = m.get("z_score")
         z_str = f"{z:+.2f}σ" if z is not None else "—"
-        rows.append(f"| {_new_flag(is_new)}{_date(item)} | {label} | {val} | {z_str} | {score:.2f} |")
+        out   = _outcome_cell(item.get("id"), outcomes)
+        rows.append(
+            f"| {_new_flag(is_new)}{_date(item)} | {label} | {val} | {z_str} | {out} | {score:.2f} |"
+        )
         if z is not None:
             chart_labels.append(label[:20])
             chart_vals.append(z)
@@ -243,10 +277,12 @@ def _render_cboe(items: list[tuple[dict, float, bool]]) -> str:
     return "\n\n".join(parts)
 
 
-def _render_cftc(items: list[tuple[dict, float, bool]]) -> str:
+def _render_cftc(
+    items: list[tuple[dict, float, bool]], outcomes: dict | None = None
+) -> str:
     rows = [
-        "| Date | Contract | Net Position | Wk Chg | z-score | Score |",
-        "|------|----------|-------------|--------|---------|-------|",
+        "| Date | Contract | Net Position | Wk Chg | z-score | Out | Score |",
+        "|------|----------|-------------|--------|---------|-----|-------|",
     ]
     chart_labels, chart_vals = [], []
     for item, score, is_new in items:
@@ -256,7 +292,11 @@ def _render_cftc(items: list[tuple[dict, float, bool]]) -> str:
         wk_chg  = f"{int(m['weekly_change']):+,}" if m.get("weekly_change") is not None else "—"
         z       = m.get("z_score")
         z_str   = f"{z:+.2f}σ" if z is not None else "—"
-        rows.append(f"| {_new_flag(is_new)}{_date(item)} | {label} | {net_pos} | {wk_chg} | {z_str} | {score:.2f} |")
+        out     = _outcome_cell(item.get("id"), outcomes)
+        rows.append(
+            f"| {_new_flag(is_new)}{_date(item)} | {label} | {net_pos} | {wk_chg} "
+            f"| {z_str} | {out} | {score:.2f} |"
+        )
         if z is not None:
             chart_labels.append(label[:20])
             chart_vals.append(z)
@@ -266,7 +306,9 @@ def _render_cftc(items: list[tuple[dict, float, bool]]) -> str:
     return "\n\n".join(parts)
 
 
-def _render_yahoo(items: list[tuple[dict, float, bool]]) -> str:
+def _render_yahoo(
+    items: list[tuple[dict, float, bool]], outcomes: dict | None = None
+) -> str:
     rows = [
         "| Date | Ticker | Price | Change % | RSI-14 | Score |",
         "|------|--------|-------|----------|--------|-------|",
@@ -277,11 +319,15 @@ def _render_yahoo(items: list[tuple[dict, float, bool]]) -> str:
         price  = f"${m['price']:.2f}"       if m.get("price")      is not None else "—"
         pct    = f"{m['pct_change']:+.2f}%" if m.get("pct_change") is not None else "—"
         rsi    = f"{m['rsi14']:.1f}"        if m.get("rsi14")      is not None else "—"
-        rows.append(f"| {_new_flag(is_new)}{_date(item)} | {ticker} | {price} | {pct} | {rsi} | {score:.2f} |")
+        rows.append(
+            f"| {_new_flag(is_new)}{_date(item)} | {ticker} | {price} | {pct} | {rsi} | {score:.2f} |"
+        )
     return "\n".join(rows)
 
 
-def _render_insider(items: list[tuple[dict, float, bool]]) -> str:
+def _render_insider(
+    items: list[tuple[dict, float, bool]], outcomes: dict | None = None
+) -> str:
     rows = [
         "| Date | Ticker | Insider | Role | Action | Value | Score |",
         "|------|--------|---------|------|--------|-------|-------|",
@@ -293,12 +339,15 @@ def _render_insider(items: list[tuple[dict, float, bool]]) -> str:
         role   = (m.get("role") or "?")[:20]
         action = m.get("action") or "?"
         val    = f"${m['value_usd']:,.0f}" if m.get("value_usd") is not None else "—"
-        rows.append(f"| {_new_flag(is_new)}{_date(item)} | {ticker} | {name} | {role} | {action} | {val} | {score:.2f} |")
+        rows.append(
+            f"| {_new_flag(is_new)}{_date(item)} | {ticker} | {name} | {role} | {action} | {val} | {score:.2f} |"
+        )
     return "\n".join(rows)
 
 
-def _render_ftd(items: list[tuple[dict, float, bool]]) -> str:
-    # FTD has no z_score — show shares + dollar value, no chart
+def _render_ftd(
+    items: list[tuple[dict, float, bool]], outcomes: dict | None = None
+) -> str:
     rows = [
         "| Date | Ticker | Shares (FTD) | Value (USD) | Score |",
         "|------|--------|-------------|-------------|-------|",
@@ -308,7 +357,9 @@ def _render_ftd(items: list[tuple[dict, float, bool]]) -> str:
         ticker = m.get("ticker") or (item.get("title") or "")[:15]
         shares = f"{int(m['qty_shares']):,}" if m.get("qty_shares") is not None else "—"
         val    = f"${m['value_usd']:,.0f}"   if m.get("value_usd") is not None else "—"
-        rows.append(f"| {_new_flag(is_new)}{_date(item)} | {ticker} | {shares} | {val} | {score:.2f} |")
+        rows.append(
+            f"| {_new_flag(is_new)}{_date(item)} | {ticker} | {shares} | {val} | {score:.2f} |"
+        )
     return "\n".join(rows)
 
 
@@ -322,7 +373,10 @@ _QUANT_RENDERERS = {
 }
 
 
-def _render_quant_block(by_source: dict[str, list[tuple[dict, float, bool]]]) -> str:
+def _render_quant_block(
+    by_source: dict[str, list[tuple[dict, float, bool]]],
+    outcomes: dict | None = None,
+) -> str:
     parts = []
     for source in sorted(by_source):
         renderer = _QUANT_RENDERERS.get(source)
@@ -331,7 +385,7 @@ def _render_quant_block(by_source: dict[str, list[tuple[dict, float, bool]]]) ->
         src_label = SOURCE_LABEL.get(source, source.upper())
         items     = by_source[source]
         parts.append(f"#### {src_label} ({len(items)} signals)\n")
-        parts.append(renderer(items))
+        parts.append(renderer(items, outcomes))
     return "\n\n".join(parts)
 
 
@@ -341,6 +395,7 @@ def _build_section(
     header: str,
     items: list[tuple[dict, float]],
     new_ids: set[int],
+    outcomes: dict | None = None,
 ) -> str:
     if not items:
         return f"## {header}\n\n*Nothing here yet.*\n"
@@ -362,7 +417,7 @@ def _build_section(
         parts.append("\n\n".join(prose))
     if quant:
         parts.append("### Quantitative Signals\n")
-        parts.append(_render_quant_block(quant))
+        parts.append(_render_quant_block(quant, outcomes))
 
     return "\n\n".join(parts)
 
@@ -372,10 +427,10 @@ def _render_tier_file(
     all_scored: list[tuple[dict, float]],
     now: datetime,
     top_n: int = 100,
+    outcomes: dict | None = None,
 ) -> str:
     cutoff_24h = now - timedelta(hours=24)
 
-    # Filter to this tier and sort by score DESC
     tier_items = sorted(
         [(item, score) for item, score in all_scored if tier_for_score(score) == tier],
         key=lambda x: x[1],
@@ -388,7 +443,6 @@ def _render_tier_file(
     ]
     new_ids = {item.get("id") for item, _ in new_items}
 
-    # All-time top-N excludes items shown in the New section to avoid duplication
     historical = [
         (item, score) for item, score in tier_items[:top_n]
         if item.get("id") not in new_ids
@@ -400,7 +454,31 @@ def _render_tier_file(
     label = TIER_LABEL[tier]
     desc  = TIER_DESC[tier]
 
-    now_cst     = now.strftime("%Y-%m-%d %H:%M UTC")
+    now_utc = now.strftime("%Y-%m-%d %H:%M UTC")
+
+    # ── Track Record callout (outcomes for FRED/CBOE/CFTC signals in this tier) ──
+    track_record_callout = ""
+    if outcomes:
+        tier_item_ids = {item.get("id") for item, _ in tier_items}
+        tier_outcomes = {k: v for k, v in outcomes.items() if k in tier_item_ids}
+        if tier_outcomes:
+            oc = Counter(row["outcome"] for row in tier_outcomes.values())
+            total_tracked = sum(oc.values())
+            resolved      = total_tracked - oc.get("pending", 0)
+            accuracy      = oc.get("confirmed", 0) / resolved if resolved > 0 else None
+            accuracy_str  = (
+                f"\n> Confirmation rate: **{accuracy:.0%}** ({resolved} resolved)"
+                if accuracy is not None else ""
+            )
+            track_record_callout = (
+                f"> [!success] Track Record — 7-day signal outcomes ({total_tracked} tracked)\n"
+                f"> ✅ {oc.get('confirmed', 0)} confirmed  "
+                f"❌ {oc.get('contradicted', 0)} contradicted  "
+                f"⚖️ {oc.get('neutral', 0)} neutral  "
+                f"⏳ {oc.get('pending', 0)} pending"
+                f"{accuracy_str}"
+            )
+
     frontmatter = (
         f"---\n"
         f"updated: {now.strftime('%Y-%m-%dT%H:%M:%S')}\n"
@@ -411,24 +489,30 @@ def _render_tier_file(
     )
 
     header_callout = (
-        f"> [!abstract] {emoji} {label} Signal — updated {now_cst}\n"
+        f"> [!abstract] {emoji} {label} Signal — updated {now_utc}\n"
         f"> **Score** = `triage_score × confidence_weight × source_multiplier`\n"
         f"> {desc}\n"
         f"> Showing **{len(new_items)} new** + top **{shown}** all-time of {total} qualifying signals"
     )
 
-    new_section     = _build_section("🆕 New — Last 24h", new_items, new_ids)
-    alltime_section = _build_section("📋 All-Time Leaders", historical, set())
+    new_section     = _build_section("🆕 New — Last 24h", new_items, new_ids, outcomes)
+    alltime_section = _build_section("📋 All-Time Leaders", historical, set(), outcomes)
 
-    return "\n\n".join([
+    sections = [
         frontmatter,
         f"# {emoji} {label} Signal — All-Time Leaderboard",
         header_callout,
+    ]
+    if track_record_callout:
+        sections.append(track_record_callout)
+    sections += [
         "---",
         new_section,
         "---",
         alltime_section,
-    ]) + "\n"
+    ]
+
+    return "\n\n".join(sections) + "\n"
 
 
 # ── Public entry point ─────────────────────────────────────────────────
@@ -440,8 +524,12 @@ def write_signal_files(top_n: int = 100) -> dict[str, int]:
         logger.info("signals: no summarized items — nothing to write")
         return {"high": 0, "medium": 0, "low": 0}
 
-    now = datetime.now(timezone.utc)
+    now        = datetime.now(timezone.utc)
     all_scored = [(dict(row), signal_score(dict(row))) for row in rows]
+
+    # Fetch 7-day outcome data for quant signals (FRED/CBOE/CFTC)
+    all_ids  = [item["id"] for item, _ in all_scored if item.get("id") is not None]
+    outcomes = db.get_outcomes(all_ids) if all_ids else {}
 
     vault      = Path(settings.obsidian_vault_path).expanduser()
     signal_dir = vault / settings.obsidian_digest_dir / "Signal"
@@ -449,7 +537,7 @@ def write_signal_files(top_n: int = 100) -> dict[str, int]:
 
     counts: dict[str, int] = {}
     for tier in ("high", "medium", "low"):
-        content    = _render_tier_file(tier, all_scored, now, top_n=top_n)
+        content    = _render_tier_file(tier, all_scored, now, top_n=top_n, outcomes=outcomes)
         path       = signal_dir / f"{TIER_LABEL[tier]}.md"
         path.write_text(content, encoding="utf-8")
         tier_count = sum(1 for _, s in all_scored if tier_for_score(s) == tier)

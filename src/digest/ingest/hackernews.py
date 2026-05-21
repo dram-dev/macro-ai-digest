@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 import requests
 
+from digest.config import settings
 from digest.ingest.base import IngestedItem, IngestorBase
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,6 @@ QUERIES = [
     "Karpathy",
 ]
 
-MIN_POINTS = 100
 HITS_PER_QUERY = 10
 
 
@@ -46,7 +46,7 @@ class HNIngestor(IngestorBase):
                         "query": q,
                         "tags": "story",
                         "hitsPerPage": HITS_PER_QUERY,
-                        "numericFilters": f"points>={MIN_POINTS}",
+                        "numericFilters": f"points>={settings.hn_min_points}",
                     },
                     timeout=15,
                 )

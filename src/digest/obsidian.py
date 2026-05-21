@@ -49,6 +49,29 @@ TOPIC_LABELS: dict[str, str] = {
     "other":             "Other",
 }
 
+# Maps topic slug → Obsidian callout type (colour-coded by urgency/category)
+TOPIC_CALLOUT: dict[str, str] = {
+    "ai_capex":         "info",
+    "fed_markets":      "warning",
+    "china":            "danger",
+    "ai_thinkers":      "tip",
+    "ai_semis":         "abstract",
+    "ai_business_apps": "example",
+    "data_viz":         "success",
+    "other":            "note",
+}
+
+TOPIC_EMOJI: dict[str, str] = {
+    "fed_markets":      "📊",
+    "china":            "🇨🇳",
+    "ai_thinkers":      "🧠",
+    "ai_capex":         "💰",
+    "ai_business_apps": "⚙️",
+    "ai_semis":         "🔬",
+    "data_viz":         "📈",
+    "other":            "📌",
+}
+
 # Display order in daily notes
 TOPIC_ORDER = [
     "fed_markets",
@@ -219,58 +242,71 @@ def _parse_see_also(raw: str | None) -> list[str]:
 
 
 def _render_summary_item(row: sqlite3.Row) -> str:
-    """Render one summarized item as a Markdown block."""
-    title = _safe(row["title"]) or "(untitled)"
-    url = _safe(row["url"])
-    summary = _safe(row["summary"])
-    why = _safe(row["why_it_matters"])
+    """Render one summarized item as a topic-coloured Obsidian callout block."""
+    title      = _safe(row["title"]) or "(untitled)"
+    url        = _safe(row["url"])
+    summary    = _safe(row["summary"])
+    why        = _safe(row["why_it_matters"])
     confidence = row["confidence"]
-    score = _row_get(row, "triage_score")
-    see_also = _parse_see_also(row["see_also"])
-    source = _safe(row["source"])
-    author = _safe(row["author"])
-    published = _safe(row["published_at"])[:10]
+    score      = _row_get(row, "triage_score")
+    see_also   = _parse_see_also(row["see_also"])
+    source     = _safe(row["source"])
+    author     = _safe(row["author"])
+    published  = _safe(row["published_at"])[:10]
+    topic_slug = _safe(_row_get(row, "topic")) or "other"
 
-    # Heading with link if URL exists
-    heading = f"### [{title}]({url})" if url else f"### {title}"
+    callout_type  = TOPIC_CALLOUT.get(topic_slug, "note")
+    # Sanitise title: strip pipes (break tables) and square brackets (break link syntax)
+    title_display = (
+        title.replace("\n", " ").replace("|", "│")
+             .replace("[", "(").replace("]", ")")[:110]
+    )
+    heading = (
+        f"> [!{callout_type}]+ [{title_display}]({url})" if url
+        else f"> [!{callout_type}]+ {title_display}"
+    )
 
-    meta_bits = []
+    meta_parts = [f"`{topic_label(topic_slug)}`"]
+    if confidence:
+        meta_parts.append(f"`{confidence}`")
+    if score is not None:
+        try:
+            meta_parts.append(f"`⭐ {float(score):.2f}`")
+        except (TypeError, ValueError):
+            pass
     if source:
-        meta_bits.append(source)
+        meta_parts.append(source)
     if author:
-        meta_bits.append(author)
+        meta_parts.append(author)
     if published:
-        meta_bits.append(published)
-    meta_bits.append(_confidence_badge(confidence, score))
-    meta_bits.append(_chat_link(row))
-    meta_line = " · ".join(meta_bits)
+        meta_parts.append(published)
+    meta_parts.append(_chat_link(row))
+    meta_line = "> " + " · ".join(meta_parts)
 
     lines = [
         heading,
-        f"*{meta_line}*",
-        "",
-        summary,
-        "",
-        f"**Why it matters:** {why}" if why else "",
+        meta_line,
+        ">",
+        f"> {summary}" if summary else "> *(no summary)*",
     ]
+    if why:
+        lines += [">", f"> **Why it matters**: {why}"]
     if see_also:
-        lines.append("")
-        lines.append("**See also:** " + ", ".join(f"_{s}_" for s in see_also))
+        lines += [">", "> **See also**: " + " · ".join(f"`{s}`" for s in see_also[:3])]
 
-    return "\n".join(line for line in lines if line is not None)
+    return "\n".join(lines)
 
 
 def _render_unsummarized_item(row: sqlite3.Row) -> str:
     """One-line bullet for kept-but-not-summarized items."""
-    title = _safe(row["title"]) or "(untitled)"
-    url = _safe(row["url"])
+    title  = _safe(row["title"]) or "(untitled)"
+    url    = _safe(row["url"])
     source = _safe(row["source"]) or "?"
-    score = row["triage_score"]
-    score_str = f"score={score:.2f}" if score is not None else ""
-    link = f"[{title}]({url})" if url else title
-    parts = [f"- {link}", f"_{source}_"]
-    if score_str:
-        parts.append(score_str)
+    score  = row["triage_score"]
+    link   = f"[{title}]({url})" if url else title
+    parts  = [f"- {link}", f"*{source}*"]
+    if score is not None:
+        parts.append(f"`⭐ {score:.2f}`")
     parts.append(_chat_link(row))
     return "  ·  ".join(parts)
 
@@ -334,33 +370,32 @@ def render_daily_note(
     # ── Connection threads (cross-item synthesis) ─────────────────────
     threads = db.get_connections(date_iso)
     if threads:
-        lines.append("## Connection Threads")
+        lines.append("## 🔗 Connection Threads")
         lines.append("")
         lines.append(
-            "_Cross-item patterns identified by Claude. Numbers are item IDs "
-            "— click the `#id` link on any item below to open a seeded chat._"
+            "_Cross-item patterns identified by Claude. Click a `#id` link to open a seeded chat._"
         )
         lines.append("")
         for thread in threads:
-            theme = (thread.get("theme") or "").strip()
+            theme   = (thread.get("theme") or "").strip()
             insight = (thread.get("insight") or "").strip()
-            ids = thread.get("item_ids") or []
+            ids     = thread.get("item_ids") or []
             id_refs = " · ".join(f"`#{i}`" for i in ids)
             if theme:
-                lines.append(f"**{theme}** — {id_refs}")
-                lines.append("")
-            if insight:
-                lines.append(insight)
+                lines.append(f"> [!abstract]+ 🔗 {theme}")
+                if id_refs:
+                    lines.append(f"> **Items**: {id_refs}")
+                if insight:
+                    lines.append(">")
+                    lines.append(f"> {insight}")
                 lines.append("")
 
     # ── Clipped-for-investigation section (always on top) ────────────
     if clipped_rows:
-        lines.append("## Clipped for investigation")
+        lines.append("## 📎 Clipped for Investigation")
         lines.append("")
         lines.append(
-            "_Posts you flagged from `77_Claude_Investigate`, with applied "
-            '"so what" analysis. Each carries a `#id` link that opens a '
-            "Claude chat seeded with the post's context._"
+            "_Posts you flagged from `77_Claude_Investigate` — each `#id` link opens a Claude chat seeded with the context._"
         )
         lines.append("")
         for row in clipped_rows:
@@ -370,13 +405,15 @@ def render_daily_note(
     # ── Auto-curated summarized section, grouped by topic ────────────
     groups = _group_by_topic(auto_rows)
     if auto_rows:
-        lines.append("## Summarized")
+        lines.append("## 📑 Summarized")
         lines.append("")
         for slug in TOPIC_ORDER:
             rows = groups.get(slug)
             if not rows:
                 continue
-            lines.append(f"## {topic_label(slug)}  &nbsp;·&nbsp; {_wikilink(slug)}")
+            emoji = TOPIC_EMOJI.get(slug, "📌")
+            n     = len(rows)
+            lines.append(f"## {emoji} {topic_label(slug)}  ·  {_wikilink(slug)}  ·  {n} item{'s' if n > 1 else ''}")
             lines.append("")
             for row in rows:
                 lines.append(_render_summary_item(row))
@@ -384,7 +421,9 @@ def render_daily_note(
         # Any topics not in canonical order (shouldn't normally happen)
         leftover = [s for s in groups if s not in TOPIC_ORDER]
         for slug in sorted(leftover):
-            lines.append(f"## {topic_label(slug)}  &nbsp;·&nbsp; {_wikilink(slug)}")
+            emoji = TOPIC_EMOJI.get(slug, "📌")
+            n     = len(groups[slug])
+            lines.append(f"## {emoji} {topic_label(slug)}  ·  {_wikilink(slug)}  ·  {n} item{'s' if n > 1 else ''}")
             lines.append("")
             for row in groups[slug]:
                 lines.append(_render_summary_item(row))
@@ -392,11 +431,10 @@ def render_daily_note(
 
     # ── Kept-unsummarized section ────────────────────────────────────
     if kept_unsum:
-        lines.append("## Kept — not summarized this run")
+        lines.append("## 📋 Kept — Not Summarized")
         lines.append("")
         lines.append(
-            "_These items passed triage but exceeded the summarizer cap. "
-            "Sorted by triage score descending._"
+            "_Passed triage but exceeded the summarizer cap. Sorted by triage score descending._"
         )
         lines.append("")
         for row in kept_unsum:
@@ -453,47 +491,60 @@ INDEX_END   = "<!-- digest:index:end -->"
 
 
 def _render_topic_item(row: sqlite3.Row, topic_slug: str) -> str:
-    """Render one item for a topic archive, wrapped in idempotency markers."""
-    title = _safe(row["title"]) or "(untitled)"
-    url = _safe(row["url"])
-    summary = _safe(row["summary"])
-    why = _safe(row["why_it_matters"])
+    """Render one item for a topic archive as a callout block, wrapped in idempotency markers."""
+    title      = _safe(row["title"]) or "(untitled)"
+    url        = _safe(row["url"])
+    summary    = _safe(row["summary"])
+    why        = _safe(row["why_it_matters"])
     confidence = row["confidence"]
-    score = _row_get(row, "triage_score")
-    see_also = _parse_see_also(row["see_also"])
-    source = _safe(row["source"])
-    author = _safe(row["author"])
-    ingested = _safe(row["ingested_at"])[:10]
-    published = _safe(row["published_at"])[:10]
+    score      = _row_get(row, "triage_score")
+    see_also   = _parse_see_also(row["see_also"])
+    source     = _safe(row["source"])
+    author     = _safe(row["author"])
+    ingested   = _safe(row["ingested_at"])[:10]
+    published  = _safe(row["published_at"])[:10]
 
-    heading = f"### [{title}]({url})" if url else f"### {title}"
+    callout_type  = TOPIC_CALLOUT.get(topic_slug, "note")
+    title_display = (
+        title.replace("\n", " ").replace("|", "│")
+             .replace("[", "(").replace("]", ")")[:110]
+    )
     daily_link = f"[[{ingested}]]" if ingested else ""
+    heading = (
+        f"> [!{callout_type}]+ [{title_display}]({url})" if url
+        else f"> [!{callout_type}]+ {title_display}"
+    )
 
-    meta_bits = []
+    meta_parts = []
     if source:
-        meta_bits.append(source)
+        meta_parts.append(source)
     if author:
-        meta_bits.append(author)
+        meta_parts.append(author)
     if published:
-        meta_bits.append(f"published {published}")
+        meta_parts.append(published)
     if daily_link:
-        meta_bits.append(f"in {daily_link}")
-    meta_bits.append(_confidence_badge(confidence, score))
-    meta_bits.append(_chat_link(row))
-    meta_line = " · ".join(meta_bits)
+        meta_parts.append(f"in {daily_link}")
+    if confidence:
+        meta_parts.append(f"`{confidence}`")
+    if score is not None:
+        try:
+            meta_parts.append(f"`⭐ {float(score):.2f}`")
+        except (TypeError, ValueError):
+            pass
+    meta_parts.append(_chat_link(row))
+    meta_line = "> " + " · ".join(meta_parts)
 
     parts = [
         ITEM_BEGIN.format(id=row["id"]),
         heading,
-        f"*{meta_line}*",
-        "",
-        summary,
-        "",
-        f"**Why it matters:** {why}" if why else "",
+        meta_line,
+        ">",
+        f"> {summary}" if summary else "> *(no summary)*",
     ]
+    if why:
+        parts += [">", f"> **Why it matters**: {why}"]
     if see_also:
-        parts.append("")
-        parts.append("**See also:** " + ", ".join(f"_{s}_" for s in see_also))
+        parts += [">", "> **See also**: " + " · ".join(f"`{s}`" for s in see_also[:3])]
     parts.append(ITEM_END.format(id=row["id"]))
     return "\n".join(p for p in parts if p is not None)
 
@@ -526,8 +577,9 @@ def render_topic_archive(topic_slug: str) -> tuple[str, list[int]]:
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
+    emoji = TOPIC_EMOJI.get(topic_slug, "📌")
     lines: list[str] = ["---", yaml.safe_dump(front, sort_keys=False).strip(), "---", ""]
-    lines.append(f"# {topic_label(topic_slug)}")
+    lines.append(f"# {emoji} {topic_label(topic_slug)}")
     lines.append("")
     lines.append("_Newest first. Each entry is upserted by ID; re-runs are idempotent._")
     lines.append("")
@@ -633,6 +685,7 @@ def render_weekly_note(
     sunday: date,
     synthesis: dict,
     rows: list[sqlite3.Row],
+    regime_md: str | None = None,
 ) -> str:
     """Build the Markdown for a weekly digest note."""
     period = f"{monday.isoformat()} – {sunday.isoformat()}"
@@ -647,6 +700,9 @@ def render_weekly_note(
     lines.append(f"# Weekly Digest — {week_iso}")
     lines.append(f"_{period}_")
     lines.append("")
+    if regime_md:
+        lines.append(regime_md)
+        lines.append("")
 
     if not rows:
         lines.append("_No summarized items this week._")
@@ -655,69 +711,78 @@ def render_weekly_note(
     # ── Themes ──────────────────────────────────────────────────────
     themes = synthesis.get("themes") or []
     if themes:
-        lines.append("## Themes of the Week")
+        lines.append("## 🎯 Themes of the Week")
         lines.append("")
         for i, t in enumerate(themes, 1):
             title = (t.get("title") or "").strip()
-            desc = (t.get("description") or "").strip()
-            lines.append(f"**{i}. {title}**")
-            lines.append("")
-            lines.append(desc)
+            desc  = (t.get("description") or "").strip()
+            lines.append(f"> [!tip]+ 🎯 Theme {i}: {title}")
+            if desc:
+                lines.append(f"> {desc}")
             lines.append("")
 
     # ── Must-reads ──────────────────────────────────────────────────
     must_reads = synthesis.get("must_reads") or []
     if must_reads:
-        # Build a lookup by item ID for quick access
         row_by_id = {r["id"]: r for r in rows}
-        lines.append("## Must-Reads")
+        lines.append("## 📌 Must-Reads")
         lines.append("")
         for mr in must_reads:
             item_id = mr.get("item_id")
-            reason = (mr.get("reason") or "").strip()
-            row = row_by_id.get(item_id)
+            reason  = (mr.get("reason") or "").strip()
+            row     = row_by_id.get(item_id)
             if row:
-                title = _safe(row["title"]) or "(untitled)"
-                url = _safe(row["url"])
-                link = f"[{title}]({url})" if url else title
-                topic = topic_label(row["topic"] or "other")
-                lines.append(f"- **{link}** _{topic}_ — {reason}")
+                title       = _safe(row["title"]) or "(untitled)"
+                url         = _safe(row["url"])
+                slug        = row["topic"] or "other"
+                link        = f"[{title}]({url})" if url else title
+                topic_disp  = topic_label(slug)
+                callout_t   = TOPIC_CALLOUT.get(slug, "note")
+                lines.append(f"> [!{callout_t}]+ 📌 {link}")
+                lines.append(f"> `{topic_disp}` — {reason}")
             else:
-                lines.append(f"- item #{item_id} — {reason}")
-        lines.append("")
+                lines.append(f"> [!note]+ 📌 Item #{item_id}")
+                lines.append(f"> {reason}")
+            lines.append("")
 
     # ── Contrarian signal ────────────────────────────────────────────
     contrarian = (synthesis.get("contrarian_signal") or "").strip()
     if contrarian:
-        lines.append("## Contrarian Signal")
+        lines.append("## ⚠️ Contrarian Signal")
         lines.append("")
+        lines.append("> [!danger] ⚠️ Contrarian Signal")
         lines.append(f"> {contrarian}")
         lines.append("")
 
     # ── Macro-AI intersection ────────────────────────────────────────
     macro_ai = (synthesis.get("macro_ai_intersection") or "").strip()
     if macro_ai:
-        lines.append("## Macro-AI Intersection")
+        lines.append("## 🔗 Macro-AI Intersection")
         lines.append("")
+        lines.append("> [!abstract] 🔗 Macro-AI Intersection")
         lines.append(f"> {macro_ai}")
         lines.append("")
 
     # ── All items grouped by topic ───────────────────────────────────
     groups = _group_by_topic(list(rows))
-    lines.append("## All Items This Week")
+    lines.append("## 📑 All Items This Week")
     lines.append("")
     for slug in TOPIC_ORDER:
         topic_rows = groups.get(slug)
         if not topic_rows:
             continue
-        lines.append(f"### {topic_label(slug)}  &nbsp;·&nbsp; {_wikilink(slug)}")
+        emoji = TOPIC_EMOJI.get(slug, "📌")
+        n     = len(topic_rows)
+        lines.append(f"### {emoji} {topic_label(slug)}  ·  {_wikilink(slug)}  ·  {n} item{'s' if n > 1 else ''}")
         lines.append("")
         for row in topic_rows:
             lines.append(_render_summary_item(row))
             lines.append("")
     leftover = [s for s in groups if s not in TOPIC_ORDER]
     for slug in sorted(leftover):
-        lines.append(f"### {topic_label(slug)}")
+        emoji = TOPIC_EMOJI.get(slug, "📌")
+        n     = len(groups[slug])
+        lines.append(f"### {emoji} {topic_label(slug)}  ·  {n} item{'s' if n > 1 else ''}")
         lines.append("")
         for row in groups[slug]:
             lines.append(_render_summary_item(row))
@@ -748,12 +813,23 @@ def publish_weekly(date_iso: str | None = None) -> dict:
     rows = db.items_for_week(monday.isoformat(), sunday.isoformat())
     logger.info("weekly: %d items for %s", len(rows), week_iso)
 
-    synthesis = synthesize_week(rows, week_label) if rows else {}
+    # Compute macro regime — best-effort, non-blocking
+    regime_md: str | None = None
+    regime_framing: str = ""
+    try:
+        from digest.macro_regime import compute_regime
+        result = compute_regime()
+        regime_framing = result.framing
+        regime_md = f"> [!info] Macro Regime: {result.label}\n> {result.narrative}"
+    except Exception as exc:
+        logger.warning("weekly: regime computation failed: %s", exc)
+
+    synthesis = synthesize_week(rows, week_label, regime_framing=regime_framing) if rows else {}
 
     paths = Paths.resolve()
     paths.ensure()
 
-    text = render_weekly_note(week_iso, monday, sunday, synthesis, rows)
+    text = render_weekly_note(week_iso, monday, sunday, synthesis, rows, regime_md=regime_md)
     target = paths.weekly_dir / f"{week_iso}.md"
     target.write_text(text, encoding="utf-8")
     logger.info("obsidian: wrote weekly %s (%d items)", target.name, len(rows))

@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 import requests
 
+from digest.config import settings
 from digest.ingest.base import IngestedItem, IngestorBase
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,6 @@ logger = logging.getLogger(__name__)
 # are interleaved with commodities; we filter by contract name at parse time.
 HEADERS = {"User-Agent": "macro-ai-digest/0.1 (research)"}
 LOOKBACK_WEEKS = 12
-SIGMA_THRESH = 1.2
 
 # Maps a substring of the CFTC market name → (short label, topic_hint)
 CURATED: dict[str, tuple[str, str]] = {
@@ -119,7 +119,7 @@ class CFTCIngestor(IngestorBase):
                 recent_changes = history_changes[-LOOKBACK_WEEKS:]
                 z = _z_score(weekly_change, recent_changes[:-1] if recent_changes else [])
 
-                if abs(z) < SIGMA_THRESH:
+                if abs(z) < settings.cftc_sigma_thresh:
                     continue
 
                 date_str = dates[-1]
