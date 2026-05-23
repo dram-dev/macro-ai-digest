@@ -685,6 +685,18 @@ def velocity() -> None:
     console.print(f"  [dim]→ {result['path']}[/dim]")
 
 
+@main.command()
+def backtest() -> None:
+    """Write signal backtest report (source × topic outcome analysis) to Obsidian."""
+    from digest.backtest import write_backtest_report
+
+    db.init_db()
+    console.rule("[bold cyan]backtest")
+    result = write_backtest_report()
+    console.print(f"  [green]✓[/green] rows={result['rows']}")
+    console.print(f"  [dim]→ {result['path']}[/dim]")
+
+
 @main.command("init-db")
 def init_db_cmd() -> None:
     """Create the SQLite DB and schema."""
