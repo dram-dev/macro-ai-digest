@@ -697,6 +697,32 @@ def backtest() -> None:
     console.print(f"  [dim]→ {result['path']}[/dim]")
 
 
+@main.command()
+@click.option(
+    "--date",
+    "date_iso",
+    default=None,
+    help="Any YYYY-MM-DD in the target week (default: today)",
+)
+def debate(date_iso: str | None) -> None:
+    """Run bull / bear / synthesis thesis debate from this week's signals."""
+    from digest.debate import generate_debate
+    from datetime import date as _date
+
+    db.init_db()
+    console.rule("[bold cyan]thesis debate")
+    try:
+        ref = _date.fromisoformat(date_iso) if date_iso else None
+        result = generate_debate(ref_date=ref)
+        console.print(
+            f"  [green]✓[/green] week={result['week']} "
+            f"regime={result['regime']} items={result['items']}"
+        )
+        console.print(f"  [dim]→ {result['path']}[/dim]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [red]✗[/red] {exc}")
+
+
 @main.command("init-db")
 def init_db_cmd() -> None:
     """Create the SQLite DB and schema."""
