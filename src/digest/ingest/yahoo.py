@@ -88,7 +88,7 @@ class YahooIngestor(IngestorBase):
                 pub = latest_date.to_pydatetime() if hasattr(latest_date, "to_pydatetime") else datetime.combine(latest_date.date(), datetime.min.time())
                 date_str = latest_date.date().isoformat() if hasattr(latest_date, "date") else str(latest_date)
 
-                reason = f"{pct:+.1f}% move" if abs(pct) >= MOVE_THRESH_PCT else f"RSI {rsi_val:.0f}"
+                reason = f"{pct:+.1f}% move" if abs(pct) >= settings.yahoo_move_thresh_pct else f"RSI {rsi_val:.0f}"
                 title = f"{ticker}: {reason} to ${snap['price']:.2f}"
 
                 items.append(IngestedItem(

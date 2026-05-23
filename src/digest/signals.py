@@ -10,10 +10,11 @@ the top-100 all-time items per tier ranked by composite signal score.
 A "🆕 New — Last 24h" section highlights items ingested since yesterday.
 
 Score formula:
-  signal_score = triage_score × confidence_weight × source_multiplier  (clamped 0–1)
+  signal_score = triage_score × confidence_weight × source_multiplier × regime_weight × sentiment_weight  (clamped 0–1)
 
   confidence_weight:  high=1.0  medium=0.6  low=0.2
   source_multiplier:  FRED/EDGAR/CBOE/CFTC/Insider=1.2  FTD/clipped=1.1  reddit/hn=0.9
+  sentiment_weight:   bullish=1.10  bearish=0.90  neutral=1.00  (only when MLX confidence ≥ 0.65)
   Tier thresholds:    High ≥ 0.72  ·  Medium 0.40–0.72  ·  Low < 0.40
 
 Triggered by `digest signals` CLI or launchd at 08:00 CST (14:00 UTC).
@@ -35,6 +36,9 @@ logger = logging.getLogger(__name__)
 # ── Scoring constants ──────────────────────────────────────────────────
 
 CONFIDENCE_WEIGHT: dict[str, float] = {"high": 1.0, "medium": 0.6, "low": 0.2}
+# Sentiment nudge — applied only when MLX confidence ≥ 0.65 (avoids polluting
+# items where sentiment classification was uncertain / defaulted to neutral).
+SENTIMENT_MULT: dict[str, float] = {"bullish": 1.10, "bearish": 0.90, "neutral": 1.0}
 SOURCE_MULTIPLIER: dict[str, float] = {
     "fred":    1.2, "edgar":   1.2, "insider": 1.2,
     "cboe":    1.2, "cftc":    1.2, "ftd":     1.1,
@@ -45,6 +49,16 @@ QUANT_SOURCES = {"fred", "cboe", "cftc", "yahoo", "insider", "ftd"}
 
 HIGH_THRESH = 0.72
 MED_THRESH  = 0.40
+
+# Regime multiplier: amplify or dampen scores based on macro environment.
+# Applied on top of the base triage_score × confidence_weight × source_multiplier.
+REGIME_WEIGHTS: dict[str, float] = {
+    "tightening":     0.85,  # Penalize — rate-sensitive headwinds dampen signal urgency
+    "on_hold":        1.00,  # Neutral
+    "easing_start":   1.10,  # Boost — risk-on tailwind elevates all signals
+    "recession_risk": 1.20,  # Amplify — high-alert mode, every signal counts
+    "soft_landing":   1.00,  # Neutral — benign environment already priced
+}
 
 # ── Visual constants ───────────────────────────────────────────────────
 
@@ -85,11 +99,15 @@ SOURCE_LABEL: dict[str, str] = {
 
 # ── Scoring ────────────────────────────────────────────────────────────
 
-def signal_score(item: dict[str, Any]) -> float:
-    ts = float(item.get("triage_score") or 0.5)
+def signal_score(item: dict[str, Any], regime: str | None = None) -> float:
+    raw_ts = item.get("triage_score")
+    ts = float(raw_ts) if raw_ts is not None else 0.5
     cw = CONFIDENCE_WEIGHT.get(item.get("confidence") or "medium", 0.6)
     sm = SOURCE_MULTIPLIER.get(item.get("source") or "", 1.0)
-    return min(1.0, ts * cw * sm)
+    rw = REGIME_WEIGHTS.get(regime or "on_hold", 1.0)
+    sent_score = float(item.get("sentiment_score") or 0.0)
+    sw = SENTIMENT_MULT.get(item.get("sentiment_label") or "neutral", 1.0) if sent_score >= 0.65 else 1.0
+    return min(1.0, ts * cw * sm * rw * sw)
 
 
 def tier_for_score(score: float) -> str:
@@ -490,7 +508,7 @@ def _render_tier_file(
 
     header_callout = (
         f"> [!abstract] {emoji} {label} Signal — updated {now_utc}\n"
-        f"> **Score** = `triage_score × confidence_weight × source_multiplier`\n"
+        f"> **Score** = `triage_score × confidence_weight × source_multiplier × regime_weight × sentiment_weight`\n"
         f"> {desc}\n"
         f"> Showing **{len(new_items)} new** + top **{shown}** all-time of {total} qualifying signals"
     )
@@ -524,8 +542,10 @@ def write_signal_files(top_n: int = 100) -> dict[str, int]:
         logger.info("signals: no summarized items — nothing to write")
         return {"high": 0, "medium": 0, "low": 0}
 
-    now        = datetime.now(timezone.utc)
-    all_scored = [(dict(row), signal_score(dict(row))) for row in rows]
+    now         = datetime.now(timezone.utc)
+    regime_row  = db.get_latest_regime()
+    regime      = regime_row["regime"] if regime_row else None
+    all_scored  = [(dict(row), signal_score(dict(row), regime=regime)) for row in rows]
 
     # Fetch 7-day outcome data for quant signals (FRED/CBOE/CFTC)
     all_ids  = [item["id"] for item, _ in all_scored if item.get("id") is not None]

@@ -19,9 +19,14 @@ from digest.config import settings
 LAUNCHD_LABELS = [
     "com.dr.digest.am",
     "com.dr.digest.pm",
-    "com.dr.digest.signals",
     "com.dr.digest.weekly",
+    "com.dr.digest.calendar",
+    "com.dr.digest.signals",
+    "com.dr.digest.velocity",
+    "com.dr.digest.backtest",
     "com.dr.digest.essay",
+    "com.dr.digest.debate",
+    "com.dr.digest.dashboard",
     "com.dr.mlx.server",
 ]
 

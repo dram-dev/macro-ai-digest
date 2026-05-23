@@ -127,13 +127,20 @@ def _extract_json(raw: str) -> dict[str, Any] | None:
             return json.loads(m.group(1))
         except json.JSONDecodeError:
             pass
-    # Last-ditch: first balanced object
-    m = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except json.JSONDecodeError:
-            pass
+    # Last-ditch: find first balanced { } using a depth counter (handles nesting)
+    start = raw.find("{")
+    if start != -1:
+        depth = 0
+        for i, ch in enumerate(raw[start:], start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(raw[start : i + 1])
+                    except json.JSONDecodeError:
+                        break
     return None
 
 

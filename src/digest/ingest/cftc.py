@@ -70,7 +70,13 @@ class CFTCIngestor(IngestorBase):
             r = requests.get(url, headers=HEADERS, timeout=60)
             r.raise_for_status()
             with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
-                csv_name = next(n for n in zf.namelist() if n.endswith(".txt") or n.endswith(".csv"))
+                csv_name = next(
+                    (n for n in zf.namelist() if n.endswith(".txt") or n.endswith(".csv")),
+                    None,
+                )
+                if csv_name is None:
+                    logger.warning("cftc: no .txt/.csv found in zip; files: %s", zf.namelist())
+                    return []
                 text = zf.read(csv_name).decode("latin-1", errors="replace")
         except Exception as exc:  # noqa: BLE001
             logger.warning("cftc: download failed: %s", exc)

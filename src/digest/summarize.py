@@ -282,6 +282,7 @@ def _call_mlx_local(user_prompt: str) -> str:
     returns clean JSON without <think>...</think> blocks.
     """
     url = settings.mlx_server_url.rstrip("/") + "/v1/chat/completions"
+    server_url = settings.mlx_server_url  # always localhost — no credentials to strip
     try:
         r = requests.post(
             url,
@@ -299,12 +300,15 @@ def _call_mlx_local(user_prompt: str) -> str:
         )
         r.raise_for_status()
     except requests.ConnectionError as exc:
-        from urllib.parse import urlparse
-        parsed = urlparse(settings.mlx_server_url)
-        safe_url = parsed._replace(username=None, password=None).geturl()
         raise BackendError(
-            f"MLX server not reachable at {safe_url}. "
+            f"MLX server not reachable at {server_url}. "
             "Start it with: mlx_lm.server --model mlx-community/Qwen3.5-27B-4bit --port 8080"
+        ) from exc
+    except requests.Timeout as exc:
+        raise BackendError(
+            f"MLX server timed out after {settings.summarizer_timeout_sec}s at {server_url}. "
+            "Server may have crashed — check logs and restart with: "
+            "mlx_lm.server --model mlx-community/Qwen3.5-27B-4bit --port 8080"
         ) from exc
     choices = r.json().get("choices", [])
     if not choices:
@@ -375,6 +379,33 @@ def run_summarize(
         return {"ready": 0, "succeeded": 0, "failed": 0}
 
     backend = settings.summarizer_backend
+
+    # Pre-flight: verify MLX server can actually generate (not just respond to HTTP).
+    # Uses a tiny 1-token inference with a 20s timeout to detect hung generation threads.
+    if backend == "mlx_local":
+        probe_url = settings.mlx_server_url.rstrip("/") + "/v1/chat/completions"
+        try:
+            probe = requests.post(probe_url, json={
+                "model": settings.mlx_model,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+                "chat_template_kwargs": {"enable_thinking": False},
+            }, timeout=20)
+            probe.raise_for_status()
+        except requests.ConnectionError:
+            logger.error(
+                "summarize: MLX server not reachable at %s — start it first, skipping batch",
+                settings.mlx_server_url,
+            )
+            return {"ready": len(rows), "succeeded": 0, "failed": 0}
+        except (requests.Timeout, Exception) as exc:
+            logger.error(
+                "summarize: MLX server health-check failed (%s) — "
+                "server may have crashed, skipping batch. "
+                "Restart with: mlx_lm.server --model mlx-community/Qwen3.5-27B-4bit --port 8080",
+                exc,
+            )
+            return {"ready": len(rows), "succeeded": 0, "failed": 0}
 
     # Fetch regime framing once for this batch (single DB lookup, not per-item)
     regime_framing = ""

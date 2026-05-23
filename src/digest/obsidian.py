@@ -355,6 +355,22 @@ def render_daily_note(
     lines.append(f"# Digest — {date_iso}")
     lines.append("")
 
+    # ── Macro Regime callout ──────────────────────────────────────────────
+    try:
+        regime_row = db.get_latest_regime()
+        if regime_row:
+            regime_label    = (regime_row["regime"] or "").replace("_", " ").title()
+            regime_narrative = regime_row["narrative"] or ""
+            regime_week      = regime_row["week"] or ""
+            lines.append(
+                f"> [!info] 🌐 Macro Regime: **{regime_label}** *(as of {regime_week})*"
+            )
+            if regime_narrative:
+                lines.append(f"> {regime_narrative}")
+            lines.append("")
+    except Exception:
+        pass
+
     # ── Market Snapshot (charts) ─────────────────────────────────────────
     if market_snapshot_md:
         lines.append("## Market Snapshot")

@@ -43,19 +43,19 @@ class _TextExtractor(HTMLParser):
 
     def __init__(self) -> None:
         super().__init__()
-        self._skip = False
+        self._skip_depth = 0  # depth counter handles nested skip-tags correctly
         self.parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list) -> None:
         if tag in ("script", "style", "noscript"):
-            self._skip = True
+            self._skip_depth += 1
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in ("script", "style", "noscript"):
-            self._skip = False
+        if tag in ("script", "style", "noscript") and self._skip_depth > 0:
+            self._skip_depth -= 1
 
     def handle_data(self, data: str) -> None:
-        if not self._skip:
+        if self._skip_depth == 0:
             s = data.strip()
             if s:
                 self.parts.append(s)
@@ -195,6 +195,7 @@ class EdgarIngestor(IngestorBase):
                             tzinfo=timezone.utc
                         )
                     except ValueError:
+                        logger.debug("edgar: unparseable date %r for %s %s", filing_date, ticker, accession)
                         published = None
 
                     # Fetch content for recent 8-K filings only (avoid backfilling)
