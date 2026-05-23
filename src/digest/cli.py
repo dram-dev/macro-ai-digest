@@ -647,6 +647,19 @@ def stocks(limit: int) -> None:
         console.print(f"  [red]✗[/red] {exc}")
 
 
+@main.command()
+def calendar() -> None:
+    """Refresh upcoming event calendar (FOMC, macro releases, earnings)."""
+    from digest.ingest.calendar import run_calendar
+
+    db.init_db()
+    console.rule("[bold cyan]calendar")
+    counts = run_calendar()
+    total = sum(counts.values())
+    details = "  ".join(f"{k}={v}" for k, v in counts.items())
+    console.print(f"  [green]✓[/green] {total} events upserted  [{details}]")
+
+
 @main.command("init-db")
 def init_db_cmd() -> None:
     """Create the SQLite DB and schema."""
