@@ -226,8 +226,20 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
     except Exception as exc:  # noqa: BLE001
         console.print(f"  [yellow]⚠[/yellow] ensemble skipped: {exc}")
 
-    # Stage 3e — quant signal outcome tracking (best-effort, non-blocking)
-    console.rule("[bold cyan]stage 3e: outcomes")
+    # Stage 3e — financial sentiment classification (best-effort, non-blocking)
+    console.rule("[bold cyan]stage 3e: sentiment")
+    try:
+        from digest.sentiment import run_sentiment
+        sc = run_sentiment()
+        console.print(
+            f"  [green]✓[/green] sentiment: processed={sc['processed']} "
+            f"succeeded={sc['succeeded']} failed={sc['failed']}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [yellow]⚠[/yellow] sentiment skipped: {exc}")
+
+    # Stage 3i — quant signal outcome tracking (best-effort, non-blocking)
+    console.rule("[bold cyan]stage 3i: outcomes")
     try:
         from digest.outcomes import run_outcomes
         oc = run_outcomes()
@@ -559,6 +571,21 @@ def dashboard() -> None:
         console.print(f"  [dim]→ {result['path']}[/dim]")
     except Exception as exc:  # noqa: BLE001
         console.print(f"  [red]✗[/red] {exc}")
+
+
+@main.command()
+@click.option("--limit", default=200, show_default=True, help="Max items to classify")
+def sentiment(limit: int) -> None:
+    """Classify financial sentiment (bullish/bearish/neutral) on kept items via MLX."""
+    from digest.sentiment import run_sentiment
+
+    db.init_db()
+    console.rule("[bold cyan]sentiment")
+    counts = run_sentiment(limit=limit)
+    console.print(
+        f"  [green]✓[/green] processed={counts['processed']} "
+        f"succeeded={counts['succeeded']} failed={counts['failed']}"
+    )
 
 
 @main.command("init-db")
