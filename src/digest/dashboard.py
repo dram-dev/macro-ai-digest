@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from digest import db
 
 logger = logging.getLogger(__name__)
@@ -161,6 +163,72 @@ def _load_yahoo() -> dict[str, list[dict]]:
     return result
 
 
+def _load_correlation(days: int = 90) -> dict:
+    """Compute cross-asset correlation matrix (FRED z-scores × Yahoo pct changes).
+
+    Returns {labels, z} suitable for a Plotly heatmap trace, or empty dict
+    when insufficient data exists.
+    """
+    fred_rows  = db.get_fred_values_window(days=days)
+    yahoo_rows = db.get_yahoo_pct_window(days=days)
+
+    fred_data:  dict[str, dict[str, float]] = {}
+    yahoo_data: dict[str, dict[str, float]] = {}
+
+    for row in fred_rows:
+        sid = row["series_id"]
+        if sid and row["z_score"] is not None:
+            fred_data.setdefault(sid, {})[row["day"]] = float(row["z_score"])
+
+    for row in yahoo_rows:
+        ticker = row["ticker"]
+        if ticker and row["pct_change"] is not None:
+            yahoo_data.setdefault(ticker, {})[row["day"]] = float(row["pct_change"])
+
+    if not fred_data and not yahoo_data:
+        return {}
+
+    # Build a combined DataFrame: dates as index, series/tickers as columns
+    all_series: dict[str, dict] = {}
+    for sid, vals in fred_data.items():
+        label = FRED_LABELS.get(sid, sid)
+        all_series[label] = vals
+    for ticker, vals in yahoo_data.items():
+        all_series[ticker] = vals
+
+    if len(all_series) < 2:
+        return {}
+
+    df = pd.DataFrame(all_series)
+    df.index = pd.to_datetime(df.index)
+    df = df.sort_index().ffill(limit=5)
+
+    corr = df.corr(method="pearson", min_periods=5)
+    corr = corr.round(3)
+
+    labels = list(corr.columns)
+    z_matrix = corr.values.tolist()
+
+    return {"labels": labels, "z": z_matrix}
+
+
+def _load_calendar_events() -> list[dict]:
+    """Load upcoming calendar events for dashboard overlay."""
+    try:
+        rows = db.get_upcoming_events(days_ahead=60)
+    except Exception:
+        return []
+    result = []
+    for row in rows:
+        result.append({
+            "date":       row["event_date"],
+            "event_type": row["event_type"],
+            "title":      row["title"],
+            "symbol":     row["symbol"] or "",
+        })
+    return result
+
+
 def _load_events(min_score: float = 0.55) -> list[dict]:
     sql = """
         SELECT source, url, title, topic,
@@ -190,10 +258,12 @@ def _load_events(min_score: float = 0.55) -> list[dict]:
 
 
 def _build_payload() -> dict:
-    fred   = _load_fred()
-    cftc   = _load_cftc()
-    yahoo  = _load_yahoo()
-    events = _load_events()
+    fred        = _load_fred()
+    cftc        = _load_cftc()
+    yahoo       = _load_yahoo()
+    events      = _load_events()
+    correlation = _load_correlation()
+    calendar    = _load_calendar_events()
 
     all_dates = (
         [p["date"] for pts in fred.values() for p in pts]
@@ -222,6 +292,8 @@ def _build_payload() -> dict:
         "cftc_series":   cftc,
         "yahoo_series":  yahoo,
         "events":        events,
+        "correlation":   correlation,
+        "calendar":      calendar,
         "topic_colors":  TOPIC_COLORS,
         "topic_labels":  TOPIC_LABELS,
         "fred_colors":   FRED_COLORS,
@@ -289,6 +361,10 @@ a:hover{text-decoration:underline}
   <div id="c2" style="height:260px"></div>
 </div>
 <div class="card">
+  <div class="ct">Cross-Asset Correlation &mdash; FRED z-scores &times; Yahoo returns (90d)</div>
+  <div id="c3" style="height:340px"></div>
+</div>
+<div class="card">
   <div class="ct">Top Signal Events &mdash; click headers to sort</div>
   <div style="max-height:380px;overflow-y:auto">
     <table>
@@ -302,6 +378,15 @@ a:hover{text-decoration:underline}
       <tbody id="tb"></tbody>
     </table>
   </div>
+</div>
+<div class="card" id="cal-card" style="display:none">
+  <div class="ct">Upcoming Events</div>
+  <table>
+    <thead><tr>
+      <th>Date</th><th>Type</th><th>Event</th>
+    </tr></thead>
+    <tbody id="cal-tb"></tbody>
+  </table>
 </div>
 <script>
 var D=__DASH_DATA__;
@@ -449,6 +534,72 @@ var yt=document.getElementById('yahoo-toggles');
 Object.keys(yahooIdx).forEach(function(ticker,i){
   makeTog(yt,ticker,yC[i%yC.length],yahooIdx[ticker],'c2');
 });
+
+// ── Cross-asset correlation heatmap ────────────────────────────────────
+if(D.correlation&&D.correlation.labels&&D.correlation.labels.length>1){
+  var corr=D.correlation;
+  var hmTrace={
+    type:'heatmap',
+    x:corr.labels,y:corr.labels,z:corr.z,
+    colorscale:[
+      [0,'#1D4ED8'],[0.25,'#3B82F6'],[0.45,'#161b22'],
+      [0.55,'#161b22'],[0.75,'#EF4444'],[1,'#B91C1C']
+    ],
+    zmid:0,zmin:-1,zmax:1,
+    text:corr.z.map(function(row){return row.map(function(v){return v.toFixed(2);});}),
+    texttemplate:'%{text}',
+    hovertemplate:'%{x} × %{y}: <b>%{z:.3f}</b><extra></extra>',
+    showscale:true,
+    colorbar:{
+      thickness:12,len:0.8,
+      tickfont:{color:'#8b949e',size:9},
+      outlinecolor:'#30363d'
+    }
+  };
+  var hmL=Object.assign({
+    height:340,margin:{l:100,r:20,t:10,b:100},
+    xaxis:{tickangle:-45,tickfont:{color:'#8b949e',size:9},linecolor:'#30363d',gridcolor:'#21262d'},
+    yaxis:{tickfont:{color:'#8b949e',size:9},linecolor:'#30363d',gridcolor:'#21262d'}
+  },BG);
+  Plotly.newPlot('c3',[hmTrace],hmL,{responsive:true,displayModeBar:false});
+}else{
+  document.getElementById('c3').innerHTML=
+    '<div style="color:#8b949e;font-size:12px;padding:20px">Insufficient data — run digest pipeline to accumulate FRED + Yahoo readings</div>';
+}
+
+// ── Calendar event overlays ─────────────────────────────────────────────
+var calColors={fomc:'#f59e0b',fred_release:'#60a5fa',earnings:'#34d399'};
+var calShapes=[];
+D.calendar.forEach(function(ev){
+  var col=calColors[ev.event_type]||'#8b949e';
+  calShapes.push({
+    type:'line',
+    x0:ev.date,x1:ev.date,
+    y0:0,y1:1,yref:'paper',
+    line:{color:col,width:1,dash:'dot'},
+    opacity:0.6
+  });
+});
+if(calShapes.length){
+  Plotly.relayout('c1',{shapes:(kL.shapes||[]).concat(calShapes)});
+  Plotly.relayout('c2',{shapes:[{type:'line',x0:0,x1:1,xref:'paper',y0:0,y1:0,yref:'y',line:{color:'#30363d',width:1,dash:'dash'}}].concat(calShapes)});
+}
+
+// ── Calendar events table ───────────────────────────────────────────────
+if(D.calendar.length){
+  var calCard=document.getElementById('cal-card');
+  calCard.style.display='';
+  var calTb=document.getElementById('cal-tb');
+  D.calendar.forEach(function(ev){
+    var col=calColors[ev.event_type]||'#8b949e';
+    var tr=document.createElement('tr');
+    tr.innerHTML=
+      '<td style="color:#8b949e">'+esc(ev.date)+'</td>'+
+      '<td><span class="bdg" style="background:'+col+'20;color:'+col+'">'+esc(ev.event_type.replace('_',' '))+'</span></td>'+
+      '<td>'+esc(ev.title)+(ev.symbol?'  <span class="src">'+esc(ev.symbol)+'</span>':'')+'</td>';
+    calTb.appendChild(tr);
+  });
+}
 
 // ── Sync x-axis zoom between charts ────────────────────────────────────
 function relayX(fromId,toId){
