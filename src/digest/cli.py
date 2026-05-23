@@ -238,6 +238,18 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
     except Exception as exc:  # noqa: BLE001
         console.print(f"  [yellow]⚠[/yellow] sentiment skipped: {exc}")
 
+    # Stage 3f — entity extraction + ticker linkage (best-effort, non-blocking)
+    console.rule("[bold cyan]stage 3f: entities")
+    try:
+        from digest.entities import run_entities
+        enc = run_entities()
+        console.print(
+            f"  [green]✓[/green] entities: processed={enc['processed']} "
+            f"with_entities={enc['with_entities']}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [yellow]⚠[/yellow] entities skipped: {exc}")
+
     # Stage 3i — quant signal outcome tracking (best-effort, non-blocking)
     console.rule("[bold cyan]stage 3i: outcomes")
     try:
@@ -585,6 +597,21 @@ def sentiment(limit: int) -> None:
     console.print(
         f"  [green]✓[/green] processed={counts['processed']} "
         f"succeeded={counts['succeeded']} failed={counts['failed']}"
+    )
+
+
+@main.command()
+@click.option("--limit", default=500, show_default=True, help="Max items to process")
+def entities(limit: int) -> None:
+    """Extract financial entities and ticker linkages from kept items."""
+    from digest.entities import run_entities
+
+    db.init_db()
+    console.rule("[bold cyan]entities")
+    counts = run_entities(limit=limit)
+    console.print(
+        f"  [green]✓[/green] processed={counts['processed']} "
+        f"with_entities={counts['with_entities']}"
     )
 
 
