@@ -250,6 +250,17 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
     except Exception as exc:  # noqa: BLE001
         console.print(f"  [yellow]⚠[/yellow] entities skipped: {exc}")
 
+    # Stage 3g — TF-IDF narrative clustering (best-effort, non-blocking)
+    console.rule("[bold cyan]stage 3g: cluster")
+    try:
+        from digest.cluster import run_clustering
+        cc = run_clustering()
+        console.print(
+            f"  [green]✓[/green] cluster: items={cc['items']} clusters={cc['clusters']}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [yellow]⚠[/yellow] cluster skipped: {exc}")
+
     # Stage 3h — stock price tracker with digest signal overlays (best-effort)
     console.rule("[bold cyan]stage 3h: stock tracker")
     try:
@@ -658,6 +669,20 @@ def calendar() -> None:
     total = sum(counts.values())
     details = "  ".join(f"{k}={v}" for k, v in counts.items())
     console.print(f"  [green]✓[/green] {total} events upserted  [{details}]")
+
+
+@main.command()
+def velocity() -> None:
+    """Write narrative velocity note (week-over-week cluster momentum) to Obsidian."""
+    from digest.velocity import write_velocity_note
+
+    db.init_db()
+    console.rule("[bold cyan]velocity")
+    result = write_velocity_note()
+    console.print(
+        f"  [green]✓[/green] clusters={result['clusters']}"
+    )
+    console.print(f"  [dim]→ {result['path']}[/dim]")
 
 
 @main.command("init-db")
