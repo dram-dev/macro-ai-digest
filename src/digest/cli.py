@@ -250,6 +250,19 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
     except Exception as exc:  # noqa: BLE001
         console.print(f"  [yellow]⚠[/yellow] entities skipped: {exc}")
 
+    # Stage 3h — stock price tracker with digest signal overlays (best-effort)
+    console.rule("[bold cyan]stage 3h: stock tracker")
+    try:
+        from digest.stock_tracker import run_stock_tracker
+        stk = run_stock_tracker()
+        console.print(
+            f"  [green]✓[/green] stocks: tickers={stk['tickers']} events={stk['events']}"
+        )
+        if stk["path"]:
+            console.print(f"  [dim]→ {stk['path']}[/dim]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [yellow]⚠[/yellow] stock tracker skipped: {exc}")
+
     # Stage 3i — quant signal outcome tracking (best-effort, non-blocking)
     console.rule("[bold cyan]stage 3i: outcomes")
     try:
@@ -613,6 +626,25 @@ def entities(limit: int) -> None:
         f"  [green]✓[/green] processed={counts['processed']} "
         f"with_entities={counts['with_entities']}"
     )
+
+
+@main.command()
+@click.option("--limit", default=50, show_default=True, help="Max tickers to track")
+def stocks(limit: int) -> None:
+    """Track top digest-mentioned stocks: price chart + signal overlays → Investments folder."""
+    from digest.stock_tracker import run_stock_tracker
+
+    db.init_db()
+    console.rule("[bold cyan]stock tracker")
+    try:
+        result = run_stock_tracker(ticker_limit=limit)
+        console.print(
+            f"  [green]✓[/green] tickers={result['tickers']} events={result['events']}"
+        )
+        if result["path"]:
+            console.print(f"  [dim]→ {result['path']}[/dim]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [red]✗[/red] {exc}")
 
 
 @main.command("init-db")
