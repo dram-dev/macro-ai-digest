@@ -1,84 +1,40 @@
-"""SQLite schema and helpers. Raw sqlite3 — no ORM, keeps things boring."""
+"""SQLite schema and helpers. Raw sqlite3 — no ORM, keeps things boring.
+
+The domain-agnostic base (items/run_log/summarizer_log schema, connection
+management, and the generic CRUD helpers) lives in `digest_core.db`. This
+module is the macro-domain layer on top: it owns the macro-specific migrations
+(macro_regime, daily_connections, signal_outcomes, upcoming_events, plus the
+ensemble/sentiment/entity/cluster columns) and the many domain query helpers
+below. The thin wrappers default `db_path` from settings and delegate to core,
+so public signatures here are unchanged across the digest-core lift.
+"""
 from __future__ import annotations
 
 import json
 import sqlite3
-from contextlib import contextmanager
-from dataclasses import asdict
-from datetime import datetime, timezone
+from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterable
+
+from digest_core.db import helpers as core_db
+from digest_core.types import IngestedItem
 
 from digest.config import settings
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS items (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    source          TEXT NOT NULL,
-    source_id       TEXT NOT NULL,
-    url             TEXT,
-    title           TEXT NOT NULL,
-    author          TEXT,
-    content         TEXT,
-    published_at    TEXT,
-    ingested_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    metadata_json   TEXT,
-    topic           TEXT,
-    summary         TEXT,
-    why_it_matters  TEXT,
-    confidence      TEXT,
-    see_also        TEXT,
-    triage_score    REAL,
-    triage_decision TEXT,
-    triaged_at      TEXT,
-    summarized_at   TEXT,
-    UNIQUE(source, source_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_items_source        ON items(source);
-CREATE INDEX IF NOT EXISTS idx_items_published     ON items(published_at);
-CREATE INDEX IF NOT EXISTS idx_items_topic         ON items(topic);
-CREATE INDEX IF NOT EXISTS idx_items_ingested      ON items(ingested_at);
-
-CREATE TABLE IF NOT EXISTS run_log (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    run_type        TEXT NOT NULL,
-    source          TEXT NOT NULL,
-    items_fetched   INTEGER,
-    items_new       INTEGER,
-    duration_ms     INTEGER,
-    status          TEXT NOT NULL,
-    error           TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_runlog_run_at ON run_log(run_at);
-
-CREATE TABLE IF NOT EXISTS fred_baseline (
-    series_id       TEXT PRIMARY KEY,
-    mean_delta      REAL,
-    stddev_delta    REAL,
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- For Phase 2 cost/usage tracking on the summarizer step.
-CREATE TABLE IF NOT EXISTS summarizer_log (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    backend         TEXT NOT NULL,
-    item_id         INTEGER NOT NULL,
-    duration_ms     INTEGER,
-    input_chars     INTEGER,
-    output_chars    INTEGER,
-    status          TEXT NOT NULL,
-    error           TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_sumlog_run_at ON summarizer_log(run_at);
-"""
-
-# Phase 1 → Phase 2 migration. Idempotent.
+# Domain migrations layered on digest_core's BASE_SCHEMA (items / run_log /
+# summarizer_log). Applied idempotently by core_db.init_db_with_migrations,
+# which swallows "duplicate column" errors — so the ALTERs that re-add columns
+# already present in BASE_SCHEMA (confidence, see_also, triage_*, summarized_at)
+# are no-ops on a fresh DB and real migrations on a pre-lift one.
 MIGRATIONS = [
+    # fred_baseline predates the lift and is macro-only (FRED anomaly z-score
+    # baselines), so it moved out of the shared base schema into this list.
+    """CREATE TABLE IF NOT EXISTS fred_baseline (
+        series_id       TEXT PRIMARY KEY,
+        mean_delta      REAL,
+        stddev_delta    REAL,
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
     "ALTER TABLE items ADD COLUMN confidence TEXT",
     "ALTER TABLE items ADD COLUMN see_also TEXT",
     "ALTER TABLE items ADD COLUMN triage_score REAL",
@@ -142,55 +98,19 @@ MIGRATIONS = [
 
 
 def init_db(db_path: Path | None = None) -> None:
-    """Create DB file and schema if missing. Apply Phase-2 migrations idempotently."""
-    path = db_path or settings.db_path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path, timeout=30) as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.executescript(SCHEMA)
-        # Run ALTERs; ignore "duplicate column" errors so it stays idempotent
-        for stmt in MIGRATIONS:
-            try:
-                conn.execute(stmt)
-            except sqlite3.OperationalError as exc:
-                if "duplicate column" not in str(exc).lower():
-                    raise
-        conn.commit()
+    """Create DB file + base schema if missing; apply macro migrations idempotently."""
+    core_db.init_db_with_migrations(db_path or settings.db_path, MIGRATIONS)
 
 
-@contextmanager
-def get_conn(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
-    """Context manager for a DB connection with row factory set."""
-    path = db_path or settings.db_path
-    conn = sqlite3.connect(path, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
+def get_conn(db_path: Path | None = None) -> AbstractContextManager[sqlite3.Connection]:
+    """Connection context manager (row factory + WAL); defaults to the configured DB."""
+    return core_db.get_conn(db_path or settings.db_path)
 
 
-def upsert_items(items: Iterable["IngestedItem"]) -> int:  # noqa: F821
+def upsert_items(items: Iterable[IngestedItem]) -> int:
     """Insert new items, ignore duplicates. Returns count of new rows."""
-    sql = """
-        INSERT OR IGNORE INTO items
-            (source, source_id, url, title, author, content, published_at, metadata_json)
-        VALUES
-            (:source, :source_id, :url, :title, :author, :content, :published_at, :metadata_json)
-    """
-    inserted = 0
     with get_conn() as conn:
-        for item in items:
-            d = asdict(item)
-            d["metadata_json"] = json.dumps(d.pop("metadata", {}) or {})
-            if isinstance(d.get("published_at"), datetime):
-                d["published_at"] = d["published_at"].isoformat()
-            cur = conn.execute(sql, d)
-            if cur.rowcount:
-                inserted += 1
-    return inserted
+        return core_db.upsert_items(conn, items)
 
 
 def log_run(
@@ -203,40 +123,26 @@ def log_run(
     error: str | None = None,
 ) -> None:
     """Append a row to run_log."""
-    sql = """
-        INSERT INTO run_log
-            (run_type, source, items_fetched, items_new, duration_ms, status, error)
-        VALUES
-            (?, ?, ?, ?, ?, ?, ?)
-    """
     with get_conn() as conn:
-        conn.execute(sql, (run_type, source, items_fetched, items_new, duration_ms, status, error))
+        core_db.log_run(
+            conn, run_type, source, items_fetched, items_new, duration_ms, status, error
+        )
 
 
 def item_stats() -> dict[str, int]:
     """Return item counts grouped by source."""
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT source, COUNT(*) AS n FROM items GROUP BY source ORDER BY n DESC"
-        ).fetchall()
-    return {row["source"]: row["n"] for row in rows}
+        return core_db.item_stats(conn)
 
 
 def recent_items(source: str | None = None, limit: int = 20) -> list[sqlite3.Row]:
     """Return most recently ingested items, optionally filtered by source."""
-    sql = "SELECT id, source, title, url, published_at, ingested_at FROM items"
-    params: tuple = ()
-    if source:
-        sql += " WHERE source = ?"
-        params = (source,)
-    sql += " ORDER BY ingested_at DESC LIMIT ?"
-    params = (*params, limit)
     with get_conn() as conn:
-        return conn.execute(sql, params).fetchall()
+        return core_db.recent_items(conn, source, limit)
 
 
-def utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+# Re-exported from digest_core so callers can keep importing it from digest.db.
+utcnow_iso = core_db.utcnow_iso
 
 
 # ── Phase 2 helpers ────────────────────────────────────────────────────

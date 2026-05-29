@@ -17,11 +17,12 @@ from __future__ import annotations
 import difflib
 import json
 import logging
-import re
 import time
 from typing import Any
 
 import requests
+
+from digest_core.summarize.runner import extract_json
 
 from digest import db
 from digest.config import settings
@@ -112,36 +113,8 @@ def _build_prompt(item: dict[str, Any]) -> str:
     )
 
 
-def _extract_json(raw: str) -> dict[str, Any] | None:
-    """Best-effort JSON extraction. Qwen sometimes wraps output or adds prose."""
-    raw = raw.strip()
-    # Common case: pure JSON
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    # Look for fenced code block
-    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except json.JSONDecodeError:
-            pass
-    # Last-ditch: find first balanced { } using a depth counter (handles nesting)
-    start = raw.find("{")
-    if start != -1:
-        depth = 0
-        for i, ch in enumerate(raw[start:], start):
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(raw[start : i + 1])
-                    except json.JSONDecodeError:
-                        break
-    return None
+# extract_json now lives in digest_core.summarize.runner (the same brace-depth
+# scan, shared with summarize + PC) and is imported above.
 
 
 def _normalize_verdict(verdict: dict[str, Any]) -> dict[str, Any]:
@@ -208,7 +181,7 @@ def triage_item(item: dict[str, Any]) -> dict[str, Any]:
     """Run triage on one item. Returns the normalized verdict."""
     prompt = _build_prompt(item)
     raw = _ollama_call(prompt)
-    verdict = _extract_json(raw) or {}
+    verdict = extract_json(raw) or {}
     if not verdict:
         logger.warning("triage: failed to parse Qwen output for item %s", item.get("id"))
         # Conservative fallback: drop the item but tag for retry
