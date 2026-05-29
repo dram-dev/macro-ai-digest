@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import AbstractContextManager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -20,6 +21,7 @@ from digest_core.db import helpers as core_db
 from digest_core.types import IngestedItem
 
 from digest.config import settings
+from digest.sinks import sink
 
 # Domain migrations layered on digest_core's BASE_SCHEMA (items / run_log /
 # summarizer_log). Applied idempotently by core_db.init_db_with_migrations,
@@ -109,8 +111,14 @@ def get_conn(db_path: Path | None = None) -> AbstractContextManager[sqlite3.Conn
 
 def upsert_items(items: Iterable[IngestedItem]) -> int:
     """Insert new items, ignore duplicates. Returns count of new rows."""
+    items_list = list(items)
+    if not items_list:
+        return 0
     with get_conn() as conn:
-        return core_db.upsert_items(conn, items)
+        inserted = core_db.upsert_items(conn, items_list)
+    # Bronze sink: every ingested item, including soon-to-be-dropped ones.
+    sink.write_ingested(items_list)
+    return inserted
 
 
 def log_run(
@@ -127,6 +135,22 @@ def log_run(
         core_db.log_run(
             conn, run_type, source, items_fetched, items_new, duration_ms, status, error
         )
+    # Bronze telemetry (stage=ingest) — derive started_at from duration.
+    ended = datetime.now(timezone.utc)
+    started = ended - timedelta(milliseconds=duration_ms)
+    sink.write_telemetry({
+        "run_id":       f"{started.isoformat(timespec='seconds')}-{source}",
+        "stage":        "ingest",
+        "source":       source,
+        "started_at":   started.isoformat(timespec="seconds"),
+        "ended_at":     ended.isoformat(timespec="seconds"),
+        "duration_ms":  duration_ms,
+        "items_in":     items_fetched,
+        "items_out":    items_new,
+        "errors":       0 if status == "ok" else 1,
+        "error_detail": error,
+        "model_id":     None,
+    })
 
 
 def item_stats() -> dict[str, int]:
@@ -441,6 +465,14 @@ def auto_keep_quantitative() -> int:
         return cur.rowcount or 0
 
 
+def _source_pair(conn: sqlite3.Connection, item_id: int) -> tuple[str, str] | None:
+    """(source, source_id) for an item — the sink's item_hash derivation key."""
+    row = conn.execute(
+        "SELECT source, source_id FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
+    return (row["source"], row["source_id"]) if row else None
+
+
 def update_triage(
     item_id: int,
     decision: str,        # 'keep' or 'drop'
@@ -449,6 +481,7 @@ def update_triage(
 ) -> None:
     """Record a triage outcome on an item."""
     with get_conn() as conn:
+        pair = _source_pair(conn, item_id)
         conn.execute(
             """
             UPDATE items
@@ -460,6 +493,12 @@ def update_triage(
             """,
             (decision, score, topic, item_id),
         )
+    if pair:
+        sink.write_triage(pair[0], pair[1], {
+            "decision": decision,
+            "score":    score,
+            "topic":    topic,
+        })
 
 
 def update_summary(
@@ -473,6 +512,7 @@ def update_summary(
     """Record summarizer output on an item."""
     see_also_json = json.dumps(see_also or [])
     with get_conn() as conn:
+        pair = _source_pair(conn, item_id)
         conn.execute(
             """
             UPDATE items
@@ -486,6 +526,13 @@ def update_summary(
             """,
             (topic, summary, why_it_matters, confidence, see_also_json, item_id),
         )
+    if pair:
+        sink.write_summary(pair[0], pair[1], {
+            "summary":        summary,
+            "why_it_matters": why_it_matters,
+            "see_also":       see_also_json,
+            "confidence":     confidence,
+        })
 
 
 def log_summarizer(
@@ -499,6 +546,7 @@ def log_summarizer(
 ) -> None:
     """Append a row to summarizer_log for cost/usage tracking."""
     with get_conn() as conn:
+        pair = _source_pair(conn, item_id)
         conn.execute(
             """
             INSERT INTO summarizer_log
@@ -508,6 +556,22 @@ def log_summarizer(
             """,
             (backend, item_id, duration_ms, input_chars, output_chars, status, error),
         )
+    # Bronze telemetry — stage='summarize'. Source comes from the item.
+    ended = datetime.now(timezone.utc)
+    started = ended - timedelta(milliseconds=duration_ms)
+    sink.write_telemetry({
+        "run_id":       f"{started.isoformat(timespec='seconds')}-summarize-{item_id}",
+        "stage":        "summarize",
+        "source":       pair[0] if pair else None,
+        "started_at":   started.isoformat(timespec="seconds"),
+        "ended_at":     ended.isoformat(timespec="seconds"),
+        "duration_ms":  duration_ms,
+        "items_in":     input_chars,
+        "items_out":    output_chars,
+        "errors":       0 if status == "ok" else 1,
+        "error_detail": error,
+        "model_id":     backend,
+    })
 
 
 def triage_stats() -> dict[str, int]:
