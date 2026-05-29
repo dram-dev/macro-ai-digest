@@ -24,6 +24,8 @@ dependencies = [
     "matplotlib>=3.9",
     "scikit-learn>=1.5",
     "pandas>=2.0",
+    "databricks-sql-connector>=4.2.6",
+    "digest-core",
 ]
 
 [project.scripts]
@@ -35,6 +37,20 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/digest"]
+
+# digest-core is the shared framework, canonically housed in the sibling
+# pc-insurance-digest repo's packages/. Consumed here as an editable path dep so
+# core changes reflect immediately in both domains. See that repo's
+# packages/digest-core/SEAMS_PLAN.md for the extraction story.
+[tool.uv.sources]
+digest-core = { path = "../pc-insurance-digest/packages/digest-core", editable = true }
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
 
 [tool.ruff]
 line-length = 100

@@ -106,11 +106,12 @@ uv run python scripts/setup.py        # interactive credential wizard
 uv run python scripts/smoke_test.py   # validate connectivity
 uv run digest init-db
 uv run digest ingest all
+uv run digest sources                 # live catalog: every source + 7-day pulse
 uv run digest pipeline --run-type manual
 uv run digest stats
 ```
 
-CLI commands: `ingest`, `triage`, `summarize`, `pipeline`, `publish`,
+CLI commands: `ingest`, `sources`, `triage`, `summarize`, `pipeline`, `publish`,
 `weekly`, `regime`, `ensemble`, `outcomes`, `cluster`, `signals`, `essay`,
 `debate`, `dashboard`, `sentiment`, `entities`, `stocks`, `calendar`,
 `velocity`, `backtest`, `recent`, `stats`, `health`, `security`, `init-db`.
@@ -196,7 +197,13 @@ macro-ai-digest/
 ## Sibling project
 
 [pc-insurance-digest](https://github.com/dram-dev/pc-insurance-digest) is the
-P&C-insurance counterpart. Both projects are converging onto a shared
-`digest-core` framework package; the extraction work happens on the PC side
-first (foundation merged), with macro porting over once PC's interfaces
-stabilize.
+P&C-insurance counterpart and the canonical home of the shared **`digest-core`**
+framework (`packages/digest-core/`). This repo now **runs on that core**,
+consuming it as an editable path dep — the SQLite base + CRUD, `IngestorBase` +
+the ingestor registry, the summarizer backends/runner, and the `digest sources`
+catalog all come from `digest_core`; macro keeps its domain logic (regime,
+essays, debate, velocity, clustering, dashboard, ~15 ingestors) on top. Adding a
+source is *drop a file in `digest/ingest/`, subclass `IngestorBase`, give it a
+`name`* — it self-registers and shows up in `digest sources`. The remaining
+design seams are tracked in the PC repo's
+`packages/digest-core/SEAMS_PLAN.md`.

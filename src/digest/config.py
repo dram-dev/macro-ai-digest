@@ -92,6 +92,17 @@ class Settings(BaseSettings):
     yahoo_rsi_oversold: float = Field(default=28.0, alias="YAHOO_RSI_OVERSOLD")
     hn_min_points: int = Field(default=100, alias="HN_MIN_POINTS")
 
+    # Databricks medallion sink (cross-domain lakehouse). All writes no-op when
+    # databricks_enabled=False. Shared-catalog model: one catalog (`digest`),
+    # domain-prefixed schemas — macro uses macro_bronze/macro_silver/macro_gold
+    # (pc-insurance-digest uses pc_*). See sql/databricks/ for DDL.
+    databricks_enabled: bool = Field(default=False, alias="DATABRICKS_ENABLED")
+    databricks_host: str = Field(default="", alias="DATABRICKS_HOST")
+    databricks_http_path: str = Field(default="", alias="DATABRICKS_HTTP_PATH")
+    databricks_token: str = Field(default="", alias="DATABRICKS_TOKEN")
+    databricks_catalog: str = Field(default="digest", alias="DATABRICKS_CATALOG")
+    databricks_schema_prefix: str = Field(default="macro_", alias="DATABRICKS_SCHEMA_PREFIX")
+
     # ── Validators ────────────────────────────────────────────────────────
 
     @field_validator("summarizer_model", mode="before")

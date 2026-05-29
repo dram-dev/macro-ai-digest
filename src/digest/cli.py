@@ -11,6 +11,7 @@ from rich.table import Table
 
 from digest import db
 from digest.config import settings
+from digest_core.cli.base import discover_ingestors, run_ingest
 
 console = Console()
 
@@ -24,31 +25,12 @@ def _setup_logging() -> None:
     )
 
 
-INGESTORS = {
-    "gmail": "digest.ingest.gmail:GmailIngestor",
-    "reddit": "digest.ingest.reddit:RedditIngestor",
-    "rss": "digest.ingest.rss:RSSIngestor",
-    "substack": "digest.ingest.substack:SubstackIngestor",
-    "arxiv": "digest.ingest.arxiv:ArXivIngestor",
-    "edgar": "digest.ingest.edgar:EdgarIngestor",
-    "insider": "digest.ingest.insider:InsiderIngestor",
-    "ftd": "digest.ingest.ftd:FTDIngestor",
-    "fred": "digest.ingest.fred:FREDIngestor",
-    "cboe": "digest.ingest.cboe:CBOEIngestor",
-    "cftc": "digest.ingest.cftc:CFTCIngestor",
-    "yahoo": "digest.ingest.yahoo:YahooIngestor",
-    "hn": "digest.ingest.hackernews:HNIngestor",
-    "clipped": "digest.ingest.clipped:ClippedIngestor",
-    "huggingface": "digest.ingest.huggingface:HFIngestor",
-}
-
-
-def _load(dotted: str):
-    module_path, class_name = dotted.split(":")
-    import importlib
-
-    module = importlib.import_module(module_path)
-    return getattr(module, class_name)
+# Sources are no longer hand-listed: every IngestorBase subclass under
+# digest.ingest self-registers (see digest_core.ingest.registry). Drop a new
+# ingestor file in that package and it appears here automatically — and in
+# `digest sources`. A source whose module fails to import (missing optional dep)
+# is reported by `digest sources` rather than silently vanishing.
+INGESTORS = discover_ingestors("digest.ingest")
 
 
 @click.group()
@@ -64,24 +46,24 @@ def ingest(source: str, run_type: str) -> None:
     """Ingest from one source or all."""
     db.init_db()
     targets = list(INGESTORS.keys()) if source == "all" else [source]
-
-    total_fetched = 0
-    total_new = 0
-    for name in targets:
-        console.rule(f"[bold cyan]{name}")
-        try:
-            cls = _load(INGESTORS[name])
-            inst = cls()
-            fetched, new = inst.run(run_type=run_type)
-            total_fetched += fetched
-            total_new += new
-            console.print(f"[green]✓[/green] {name}: fetched={fetched} new={new}")
-        except Exception as exc:  # noqa: BLE001
-            console.print(f"[red]✗[/red] {name}: {exc}")
-
+    total_fetched, total_new = run_ingest(INGESTORS, targets, run_type, console)
     if source == "all":
         console.rule("[bold]summary")
         console.print(f"total fetched={total_fetched} new={total_new}")
+
+
+@main.command()
+def sources() -> None:
+    """Live source catalog: every registered ingestor + its 7-day pulse.
+
+    Auto-discovered from the registry — a newly added ingestor shows up here on
+    its own (as 'never-run' until its first ingest). Sources whose module can't
+    import (missing optional dep) are flagged rather than silently dropped.
+    """
+    from digest_core import catalog
+
+    db.init_db()
+    catalog.print_sources(db.get_conn, "digest.ingest", console=console)
 
 
 @main.command()
@@ -146,7 +128,7 @@ def triage(limit: int) -> None:
     "--limit",
     default=None,
     type=int,
-    help=f"Max items to summarize (overrides SUMMARIZER_MAX_PER_RUN)",
+    help="Max items to summarize (overrides SUMMARIZER_MAX_PER_RUN)",
 )
 def summarize(limit: int | None) -> None:
     """Summarize the top-scored items that passed triage."""
@@ -175,13 +157,7 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
 
     # Stage 1 — ingest all
     console.rule("[bold cyan]stage 1: ingest")
-    for name in INGESTORS:
-        try:
-            cls = _load(INGESTORS[name])
-            fetched, new = cls().run(run_type=run_type)
-            console.print(f"  [green]✓[/green] {name}: {fetched}/{new}")
-        except Exception as exc:  # noqa: BLE001
-            console.print(f"  [red]✗[/red] {name}: {exc}")
+    run_ingest(INGESTORS, list(INGESTORS), run_type, console, per_source_rule=False)
 
     # Stage 2 — triage everything new
     console.rule("[bold cyan]stage 2: triage")
@@ -377,7 +353,7 @@ def recent(source: str | None, limit: int) -> None:
     if not rows:
         console.print("[yellow]No items.[/yellow]")
         return
-    table = Table(title=f"Recent items" + (f" — {source}" if source else ""))
+    table = Table(title="Recent items" + (f" — {source}" if source else ""))
     table.add_column("Source")
     table.add_column("Published", style="dim")
     table.add_column("Title")
@@ -393,7 +369,7 @@ def recent(source: str | None, limit: int) -> None:
 @main.command()
 def regime() -> None:
     """Classify current macro regime from FRED signals and show result."""
-    from digest.macro_regime import REGIME_LABELS, compute_regime
+    from digest.macro_regime import compute_regime
 
     db.init_db()
     console.rule("[bold cyan]macro regime")
