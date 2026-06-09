@@ -55,3 +55,57 @@ def test_render_topic_archive_uses_core_index_and_markers(fresh_db, make_item):
     assert obsidian.ITEM_BEGIN.format(id=item_ids[0]) in text
     assert "https://claude.ai/new?q=" in text        # core chat link
     assert "Fed holds rates" in text
+
+
+def test_topic_archive_cap_rolls_over_by_month(fresh_db, make_item, monkeypatch, tmp_path):
+    monkeypatch.setattr(db.settings, "obsidian_topic_archive_cap", 2)
+    vault = tmp_path / "vault"
+    (vault / "80 Digest").mkdir(parents=True)
+    monkeypatch.setattr(db.settings, "obsidian_vault_path", str(vault))
+    monkeypatch.setattr(db.settings, "obsidian_digest_dir", "80 Digest")
+
+    db.upsert_items([make_item(source_id=f"c{i}", title=f"Item {i}") for i in range(4)])
+    with db.get_conn() as conn:
+        conn.execute(
+            """UPDATE items SET topic='china', triage_decision='keep',
+               summary='S', confidence='high', triage_score=0.5"""
+        )
+        # c0/c1 newest (this month); c2/c3 older, in a different month
+        conn.execute(
+            "UPDATE items SET ingested_at = datetime('now', '-45 days') "
+            "WHERE source_id IN ('c2', 'c3')"
+        )
+
+    paths = obsidian.Paths.resolve()
+    paths.ensure()
+    target, count = obsidian.write_topic_archive("china", paths)
+    assert count == 4
+
+    main = target.read_text(encoding="utf-8")
+    assert "Item 0" in main and "Item 1" in main
+    assert "Item 2" not in main and "Item 3" not in main
+    assert "## Older entries" in main
+
+    rollovers = list((paths.topics_dir / "Archive").glob("China *.md"))
+    assert len(rollovers) == 1
+    rolled = rollovers[0].read_text(encoding="utf-8")
+    assert "Item 2" in rolled and "Item 3" in rolled
+    assert "updated_at" not in rolled  # frozen — byte-stable across re-runs
+
+    # second run leaves the frozen rollover untouched (no mtime churn)
+    mtime = rollovers[0].stat().st_mtime
+    obsidian.write_topic_archive("china", paths)
+    assert rollovers[0].stat().st_mtime == mtime
+
+
+def test_topic_archive_cap_disabled_keeps_single_file(fresh_db, make_item, monkeypatch):
+    monkeypatch.setattr(db.settings, "obsidian_topic_archive_cap", 0)
+    db.upsert_items([make_item(source_id=f"d{i}") for i in range(3)])
+    with db.get_conn() as conn:
+        conn.execute(
+            """UPDATE items SET topic='china', triage_decision='keep',
+               summary='S', confidence='high', triage_score=0.5"""
+        )
+    text, ids = obsidian.render_topic_archive("china")
+    assert len(ids) == 3
+    assert "## Older entries" not in text

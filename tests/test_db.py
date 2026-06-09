@@ -44,3 +44,24 @@ def test_log_run_and_recent_items(fresh_db, make_item):
 def test_utcnow_iso_is_core():
     from digest_core.db import helpers as core_db
     assert db.utcnow_iso is core_db.utcnow_iso
+
+
+def test_items_ready_for_summary_age_out(fresh_db, make_item):
+    db.upsert_items([make_item(source_id=f"r{i}") for i in range(3)])
+    with db.get_conn() as conn:
+        conn.execute("UPDATE items SET triage_decision='keep'")
+        # r0 is 40 days old — past the age-out; r1/r2 are fresh
+        conn.execute(
+            "UPDATE items SET ingested_at = datetime('now', '-40 days') "
+            "WHERE source_id = 'r0'"
+        )
+
+    all_rows = db.items_ready_for_summary(max_age_days=None)
+    assert len(all_rows) == 3
+
+    fresh_rows = db.items_ready_for_summary(max_age_days=30)
+    assert {r["source_id"] for r in fresh_rows} == {"r1", "r2"}
+
+    # window-function path (per_source_cap) honors the filter too
+    capped = db.items_ready_for_summary(per_source_cap=10, max_age_days=30)
+    assert {r["source_id"] for r in capped} == {"r1", "r2"}

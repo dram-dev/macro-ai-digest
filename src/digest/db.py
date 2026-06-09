@@ -356,6 +356,7 @@ def items_ready_for_summary(
     limit: int | None = 75,
     source: str | None = None,
     per_source_cap: int | None = None,
+    max_age_days: int | None = None,
 ) -> list[sqlite3.Row]:
     """Items that passed triage but haven't been summarized yet.
 
@@ -367,8 +368,13 @@ def items_ready_for_summary(
         limit: total max rows returned.
         source: optional source filter; when set, per_source_cap is ignored.
         per_source_cap: max items from any one source (ignored when source is set).
+        max_age_days: skip items ingested more than this many days ago, so
+            capped-out sources age out instead of accumulating a backlog.
     """
     params: list = []
+    age_clause = ""
+    if max_age_days is not None:
+        age_clause = " AND ingested_at >= datetime('now', ?)"
 
     if source is not None or per_source_cap is None:
         # Simple path: single-source filter or no per-source cap needed.
@@ -379,6 +385,9 @@ def items_ready_for_summary(
             WHERE triage_decision = 'keep'
               AND summary IS NULL
         """
+        if max_age_days is not None:
+            sql += age_clause
+            params.append(f"-{max_age_days} days")
         if source is not None:
             sql += " AND source = ?"
             params.append(source)
@@ -388,7 +397,7 @@ def items_ready_for_summary(
             params.append(limit)
     else:
         # Window-function path: cap each source independently, then take top-N overall.
-        sql = """
+        sql = f"""
             SELECT id, source, source_id, url, title, author, content,
                    published_at, metadata_json, topic, triage_score
             FROM (
@@ -400,11 +409,13 @@ def items_ready_for_summary(
                        ) AS rn
                 FROM items
                 WHERE triage_decision = 'keep'
-                  AND summary IS NULL
+                  AND summary IS NULL{age_clause}
             )
             WHERE rn <= ?
             ORDER BY triage_score DESC, ingested_at DESC
         """
+        if max_age_days is not None:
+            params.append(f"-{max_age_days} days")
         params.append(per_source_cap)
         if limit is not None:
             sql += " LIMIT ?"

@@ -56,7 +56,7 @@ def _most_recent_url() -> tuple[str, str]:
 def _try_urls() -> tuple[bytes | None, str]:
     """Try current and fallback FTD URLs, return (raw_bytes, period_label)."""
     now = datetime.now(timezone.utc)
-    year, month, day = now.year, now.month, now.day
+    year, month = now.year, now.month
 
     candidates = []
     # Try this month's second half, this month's first half, prior month's second half

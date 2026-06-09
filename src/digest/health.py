@@ -9,7 +9,6 @@ import json
 import subprocess
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -179,7 +178,7 @@ def check_launchd() -> dict:
         lines = result.stdout.splitlines()
         jobs: dict[str, dict] = {}
         for label in LAUNCHD_LABELS:
-            match = next((l for l in lines if label in l), None)
+            match = next((line for line in lines if label in line), None)
             if match:
                 parts = match.split()
                 jobs[label] = {

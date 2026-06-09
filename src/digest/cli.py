@@ -182,85 +182,65 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
         f"  [green]✓[/green] succeeded={s['succeeded']} failed={s['failed']} ready={s['ready']}"
     )
 
-    # Stage 3c — cross-item connection detection (best-effort, non-blocking)
-    console.rule("[bold cyan]stage 3c: connections")
-    try:
+    # Stages 3c–3i — enrichment passes, all best-effort and non-blocking.
+    # Each entry: (stage id, display name, runner, result-line formatter).
+    def _connections() -> str:
         from digest.connections import run_connections
-        threads = run_connections()
-        console.print(f"  [green]✓[/green] {len(threads)} connection threads found")
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"  [yellow]⚠[/yellow] connections skipped: {exc}")
+        return f"{len(run_connections())} connection threads found"
 
-    # Stage 3d — multi-persona ensemble scoring (best-effort, non-blocking)
-    console.rule("[bold cyan]stage 3d: ensemble scoring")
-    try:
+    def _ensemble() -> str:
         from digest.ensemble import run_ensemble
         ec = run_ensemble()
-        console.print(
-            f"  [green]✓[/green] ensemble: succeeded={ec['succeeded']} failed={ec['failed']}"
-        )
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"  [yellow]⚠[/yellow] ensemble skipped: {exc}")
+        return f"ensemble: succeeded={ec['succeeded']} failed={ec['failed']}"
 
-    # Stage 3e — financial sentiment classification (best-effort, non-blocking)
-    console.rule("[bold cyan]stage 3e: sentiment")
-    try:
+    def _sentiment() -> str:
         from digest.sentiment import run_sentiment
         sc = run_sentiment()
-        console.print(
-            f"  [green]✓[/green] sentiment: processed={sc['processed']} "
+        return (
+            f"sentiment: processed={sc['processed']} "
             f"succeeded={sc['succeeded']} failed={sc['failed']}"
         )
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"  [yellow]⚠[/yellow] sentiment skipped: {exc}")
 
-    # Stage 3f — entity extraction + ticker linkage (best-effort, non-blocking)
-    console.rule("[bold cyan]stage 3f: entities")
-    try:
+    def _entities() -> str:
         from digest.entities import run_entities
         enc = run_entities()
-        console.print(
-            f"  [green]✓[/green] entities: processed={enc['processed']} "
-            f"with_entities={enc['with_entities']}"
-        )
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"  [yellow]⚠[/yellow] entities skipped: {exc}")
+        return f"entities: processed={enc['processed']} with_entities={enc['with_entities']}"
 
-    # Stage 3g — TF-IDF narrative clustering (best-effort, non-blocking)
-    console.rule("[bold cyan]stage 3g: cluster")
-    try:
+    def _cluster() -> str:
         from digest.cluster import run_clustering
         cc = run_clustering()
-        console.print(
-            f"  [green]✓[/green] cluster: items={cc['items']} clusters={cc['clusters']}"
-        )
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"  [yellow]⚠[/yellow] cluster skipped: {exc}")
+        return f"cluster: items={cc['items']} clusters={cc['clusters']}"
 
-    # Stage 3h — stock price tracker with digest signal overlays (best-effort)
-    console.rule("[bold cyan]stage 3h: stock tracker")
-    try:
+    def _stocks() -> str:
         from digest.stock_tracker import run_stock_tracker
         stk = run_stock_tracker()
-        console.print(
-            f"  [green]✓[/green] stocks: tickers={stk['tickers']} events={stk['events']}"
-        )
         if stk["path"]:
             console.print(f"  [dim]→ {stk['path']}[/dim]")
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"  [yellow]⚠[/yellow] stock tracker skipped: {exc}")
+        return f"stocks: tickers={stk['tickers']} events={stk['events']}"
 
-    # Stage 3i — quant signal outcome tracking (best-effort, non-blocking)
-    console.rule("[bold cyan]stage 3i: outcomes")
-    try:
+    def _outcomes() -> str:
         from digest.outcomes import run_outcomes
         oc = run_outcomes()
-        console.print(
-            f"  [green]✓[/green] outcomes: confirmed={oc['confirmed']} "
+        return (
+            f"outcomes: confirmed={oc['confirmed']} "
             f"contradicted={oc['contradicted']} pending={oc['pending']}"
         )
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"  [yellow]⚠[/yellow] outcomes skipped: {exc}")
+
+    enrichment_stages = [
+        ("3c", "connections", _connections),
+        ("3d", "ensemble scoring", _ensemble),
+        ("3e", "sentiment", _sentiment),
+        ("3f", "entities", _entities),
+        ("3g", "cluster", _cluster),
+        ("3h", "stock tracker", _stocks),
+        ("3i", "outcomes", _outcomes),
+    ]
+    for stage_id, name, runner in enrichment_stages:
+        console.rule(f"[bold cyan]stage {stage_id}: {name}")
+        try:
+            console.print(f"  [green]✓[/green] {runner()}")
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"  [yellow]⚠[/yellow] {name} skipped: {exc}")
 
     # Stage 4 — write to Obsidian
     if skip_publish:

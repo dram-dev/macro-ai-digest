@@ -66,19 +66,27 @@ def compute_velocity() -> list[dict]:
 
 
 def _arrow(c: dict) -> str:
-    if c["is_new"]:  return "🆕"
-    if c["is_gone"]: return "💀"
+    if c["is_new"]:
+        return "🆕"
+    if c["is_gone"]:
+        return "💀"
     v = c["velocity"]
-    if v > 0.5:  return "🔥"
-    if v > 0.2:  return "↑"
-    if v < -0.5: return "📉"
-    if v < -0.2: return "↓"
+    if v > 0.5:
+        return "🔥"
+    if v > 0.2:
+        return "↑"
+    if v < -0.5:
+        return "📉"
+    if v < -0.2:
+        return "↓"
     return "→"
 
 
 def _wow_str(c: dict) -> str:
-    if c["is_new"]:  return "NEW"
-    if c["is_gone"]: return "-100%"
+    if c["is_new"]:
+        return "NEW"
+    if c["is_gone"]:
+        return "-100%"
     return f"{c['velocity']:+.0%}"
 
 
