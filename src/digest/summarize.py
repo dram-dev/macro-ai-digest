@@ -1,12 +1,15 @@
 """Phase 2 — Summarize. Backend-abstracted, with a kill-switch.
 
 Backends share a common interface: take an item dict, return a SummaryOutput.
-Default backend is claude_cli_pro (uses your Claude Pro subscription via the
-`claude -p` CLI). When Pro rate limits collide with interactive use, flip
-SUMMARIZER_BACKEND in .env to switch — no code change.
+Default backend is mlx_local (Qwen3.5-27B on the shared MLX server) — it won
+the May 2026 trial vs claude_cli_pro on success rate (92% vs 55%; Pro rate
+limits collided with interactive use). Flip SUMMARIZER_BACKEND in .env to
+switch — no code change.
 
 Backends:
-  - claude_cli_pro:    invokes `claude -p` headless on Sonnet. $0 (subscription).
+  - mlx_local:         MLX-LM server, Qwen3.5-27B. $0, fully local. Default.
+  - claude_cli_pro:    invokes `claude -p` headless on Sonnet. $0 (subscription),
+                       but fails when Pro rate limits are exhausted.
   - haiku_api:         direct Anthropic API, Haiku 4.5 + caching. ~$0.50-1/mo.
   - gemini_flash_free: Google AI Studio free tier. $0.
   - local_qwen:        Ollama Qwen 14B. $0, lower polish on prose.
@@ -200,7 +203,15 @@ def run_summarize(
     else:
         cap = settings.summarizer_max_per_run
         per_source_cap = settings.summarizer_max_per_source if source is None else None
-    rows = db.items_ready_for_summary(limit=cap, source=source, per_source_cap=per_source_cap)
+    # Age-out: items that kept losing the cap fight stop being eligible after
+    # SUMMARIZER_MAX_AGE_DAYS instead of piling up forever. Clipped items are
+    # user-curated and exempt; 0 disables the age-out entirely.
+    max_age_days = settings.summarizer_max_age_days or None
+    if source == "clipped":
+        max_age_days = None
+    rows = db.items_ready_for_summary(
+        limit=cap, source=source, per_source_cap=per_source_cap, max_age_days=max_age_days
+    )
     if not rows:
         logger.info("summarize: nothing ready (source=%s)", source or "all")
         return {"ready": 0, "succeeded": 0, "failed": 0}

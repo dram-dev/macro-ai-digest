@@ -46,10 +46,13 @@ class Settings(BaseSettings):
     gmail_lookback_days: int = Field(default=14, alias="GMAIL_LOOKBACK_DAYS")
 
     # Summarizer (Phase 2)
-    summarizer_backend: str = Field(default="claude_cli_pro", alias="SUMMARIZER_BACKEND")
+    summarizer_backend: str = Field(default="mlx_local", alias="SUMMARIZER_BACKEND")
     summarizer_model: str = Field(default="sonnet", alias="SUMMARIZER_MODEL")
     summarizer_max_per_run: int = Field(default=75, alias="SUMMARIZER_MAX_PER_RUN")
     summarizer_max_per_source: int = Field(default=15, alias="SUMMARIZER_MAX_PER_SOURCE")
+    # Keep-items older than this never get summarized (0 disables the age-out).
+    # Stops capped-out sources (RSS) from accumulating an ever-growing backlog.
+    summarizer_max_age_days: int = Field(default=30, alias="SUMMARIZER_MAX_AGE_DAYS")
     summarizer_timeout_sec: int = Field(default=120, alias="SUMMARIZER_TIMEOUT_SEC")
 
     # Optional API keys for fallback summarizer backends
@@ -65,6 +68,9 @@ class Settings(BaseSettings):
     # Obsidian (Phase 3)
     obsidian_vault_path: str = Field(default="", alias="OBSIDIAN_VAULT_PATH")
     obsidian_digest_dir: str = Field(default="80 Digest", alias="OBSIDIAN_DIGEST_DIR")
+    # Max items kept in Topics/<Topic>.md; older entries roll over into frozen
+    # per-month files under Topics/Archive/ (0 keeps everything in one file).
+    obsidian_topic_archive_cap: int = Field(default=200, alias="OBSIDIAN_TOPIC_ARCHIVE_CAP")
 
     # Yahoo Finance watchlist (Tier 2)
     yahoo_tickers: str = Field(

@@ -6,13 +6,11 @@ significant vs its recent baseline. Quiet days produce no items.
 """
 from __future__ import annotations
 
-import io
 import logging
 from datetime import datetime
 
 import requests
 
-from digest import db
 from digest.config import settings
 from digest.ingest.base import IngestedItem, IngestorBase
 
@@ -74,7 +72,6 @@ class CBOEIngestor(IngestorBase):
                         continue
 
                 if len(closes) >= LOOKBACK + 2:
-                    recent_closes = closes[-(LOOKBACK + 1):-1]
                     recent_changes = [closes[i] - closes[i-1] for i in range(-LOOKBACK, 0)]
                     latest_close = closes[-1]
                     prev_close = closes[-2]

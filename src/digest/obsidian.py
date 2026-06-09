@@ -453,24 +453,32 @@ def _render_topic_item(row: sqlite3.Row, topic_slug: str) -> str:
     return "\n".join(p for p in parts if p is not None)
 
 
-def render_topic_archive(topic_slug: str) -> tuple[str, list[int]]:
-    """Render the full topic archive markdown. Returns (text, item_ids)."""
-    rows = db.items_by_topic(topic_slug)
-    item_ids = [r["id"] for r in rows]
-
+def _render_archive_doc(
+    topic_slug: str,
+    rows: list[sqlite3.Row],
+    *,
+    title: str,
+    note_line: str,
+    rollover_section: list[str] | None = None,
+    stamp_updated: bool = True,
+) -> str:
+    """Render one archive document (main topic file or a monthly rollover)."""
     front = {
         "topic": topic_slug,
         "label": topic_label(topic_slug),
         "kind": "digest-topic-archive",
         "item_count": len(rows),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    # Rollover files omit updated_at so frozen months render byte-identically
+    # and write_topic_archive can skip rewriting them.
+    if stamp_updated:
+        front["updated_at"] = datetime.now(timezone.utc).isoformat()
 
     emoji = TOPIC_EMOJI.get(topic_slug, "📌")
     lines: list[str] = ["---", yaml.safe_dump(front, sort_keys=False).strip(), "---", ""]
-    lines.append(f"# {emoji} {topic_label(topic_slug)}")
+    lines.append(f"# {emoji} {title}")
     lines.append("")
-    lines.append("_Newest first. Each entry is upserted by ID; re-runs are idempotent._")
+    lines.append(note_line)
     lines.append("")
     lines.append("## Entries")
     lines.append("")
@@ -479,19 +487,86 @@ def render_topic_archive(topic_slug: str) -> tuple[str, list[int]]:
         lines.append(_render_topic_item(row, topic_slug))
         lines.append("")
 
+    if rollover_section:
+        lines.extend(rollover_section)
+
     lines.append("## Index")
     lines.append("")
     lines.append(_build_index_block(rows))
     lines.append("")
 
-    return "\n".join(lines).rstrip() + "\n", item_ids
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _split_rollover(
+    rows: list[sqlite3.Row], cap: int
+) -> tuple[list[sqlite3.Row], dict[str, list[sqlite3.Row]]]:
+    """Split newest-first rows into (recent, older-by-ingestion-month)."""
+    if not cap or len(rows) <= cap:
+        return rows, {}
+    by_month: dict[str, list[sqlite3.Row]] = {}
+    for row in rows[cap:]:
+        month = (row["ingested_at"] or "")[:7] or "undated"
+        by_month.setdefault(month, []).append(row)
+    return rows[:cap], by_month
+
+
+def _render_topic_docs(topic_slug: str) -> tuple[str, dict[str, str], list[int]]:
+    """Render the capped main archive + frozen monthly rollover docs.
+
+    Returns (main_text, {rollover_filename: text}, all_item_ids).
+    """
+    rows = db.items_by_topic(topic_slug)
+    recent, by_month = _split_rollover(rows, settings.obsidian_topic_archive_cap)
+    label = topic_label(topic_slug)
+
+    rollover_docs: dict[str, str] = {}
+    rollover_section: list[str] | None = None
+    if by_month:
+        rollover_section = ["## Older entries", ""]
+        for month in sorted(by_month, reverse=True):
+            mrows = by_month[month]
+            rollover_section.append(f"- [[{label} {month}]] — {len(mrows)} items")
+            rollover_docs[f"{label} {month}.md"] = _render_archive_doc(
+                topic_slug,
+                mrows,
+                title=f"{label} — {month}",
+                note_line="_Rolled over from the main topic archive; this file is frozen._",
+                stamp_updated=False,
+            )
+        rollover_section.append("")
+
+    main = _render_archive_doc(
+        topic_slug,
+        recent,
+        title=label,
+        note_line="_Newest first. Each entry is upserted by ID; re-runs are idempotent._",
+        rollover_section=rollover_section,
+    )
+    return main, rollover_docs, [r["id"] for r in rows]
+
+
+def render_topic_archive(topic_slug: str) -> tuple[str, list[int]]:
+    """Render the main topic archive markdown. Returns (text, item_ids)."""
+    main, _, item_ids = _render_topic_docs(topic_slug)
+    return main, item_ids
 
 
 def write_topic_archive(topic_slug: str, paths: Paths) -> tuple[Path, int]:
-    text, item_ids = render_topic_archive(topic_slug)
+    main, rollover_docs, item_ids = _render_topic_docs(topic_slug)
     target = paths.topics_dir / topic_filename(topic_slug)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text, encoding="utf-8")
+    target.write_text(main, encoding="utf-8")
+
+    if rollover_docs:
+        archive_dir = paths.topics_dir / "Archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        for fname, text in rollover_docs.items():
+            path = archive_dir / fname
+            # Frozen months are byte-stable — skip the write (and the Obsidian
+            # sync churn) unless content actually changed.
+            if not path.exists() or path.read_text(encoding="utf-8") != text:
+                path.write_text(text, encoding="utf-8")
     return target, len(item_ids)
 
 

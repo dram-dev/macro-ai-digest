@@ -46,7 +46,7 @@ packages = ["src/digest"]
 digest-core = { path = "../pc-insurance-digest/packages/digest-core", editable = true }
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.15"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

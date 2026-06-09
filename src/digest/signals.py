@@ -209,7 +209,7 @@ def _chart_block(labels: list[str], values: list[float], dataset_label: str) -> 
     """Render a Mermaid xychart-beta bar chart (native Obsidian 1.4+, no plugin)."""
     max_abs = max((abs(v) for v in values), default=3.0)
     y_max   = max(3.0, round(max_abs + 0.5, 1))
-    lbl     = "[" + ", ".join(f'"{l}"' for l in labels) + "]"
+    lbl     = "[" + ", ".join(f'"{lab}"' for lab in labels) + "]"
     dat     = "[" + ", ".join(f"{v:.2f}" for v in values) + "]"
     return (
         "```mermaid\n"
