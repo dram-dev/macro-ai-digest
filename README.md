@@ -48,10 +48,14 @@ dashboard / backtest`
 - Cluster + narrative velocity — week-over-week momentum across clusters
 
 **Publish (Obsidian vault, `80 Digest/`):**
+- `Brief/YYYY-MM-DD Brief.md` — mobile-first front page: regime, top 5
+  signals (with seeded Claude chat links), connection threads, outcome
+  scoreboard, upcoming events
 - `Daily/YYYY-MM-DD.md` — full daily note with regime callout, top signals,
-  per-topic summaries
+  per-topic summaries (long-tail items carry plain `#id` refs to stay light)
 - `Topics/<Topic>.md` — per-topic archive, idempotent upsert by item ID
-- `Weekly/<YYYY-WW>.md` — themes, must-reads, contrarian signal, weekly essay
+- `Weekly/<YYYY-WW>.md` — themes, must-reads, contrarian signal, weekly essay;
+  the full item replay lives in the companion `<YYYY-WW> Items.md`
 - `Investments/<TICKER>.md` — stock tracker notes with signal overlays
 - `_meta/Run Log.md` — append-only operations log
 - HTML dashboard with cross-asset correlation + upcoming events overlay
