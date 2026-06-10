@@ -115,10 +115,15 @@ class Paths(_CorePaths):
     def storylines_dir(self) -> Path:
         return self.digest_root / "Storylines"
 
+    @property
+    def signal_dir(self) -> Path:
+        return self.digest_root / "Signal"
+
     def ensure(self) -> None:
         super().ensure()
         self.brief_dir.mkdir(parents=True, exist_ok=True)
         self.storylines_dir.mkdir(parents=True, exist_ok=True)
+        self.signal_dir.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def resolve(cls) -> "Paths":
@@ -701,6 +706,94 @@ def write_storylines(paths: Paths) -> int:
     return len(stories)
 
 
+# ── Prediction scorecard (Wave 3) ──────────────────────────────────────
+
+_VERDICT_BADGE = {"correct": "✅", "incorrect": "❌", "unclear": "❓"}
+
+
+def _hit_rate_line() -> str:
+    """'62% hit rate (8/13) · essay 3/4 · debate 2/5' across resolved calls."""
+    from digest.predictions import hit_rate
+
+    stats = db.prediction_stats()
+    correct, resolved = hit_rate(stats)
+    if not resolved:
+        return "No resolved calls yet."
+    parts = [f"**{correct / resolved:.0%}** hit rate ({correct}/{resolved} resolved)"]
+    for source in sorted(stats):
+        c = stats[source].get("correct", 0)
+        r = c + stats[source].get("incorrect", 0)
+        if r:
+            parts.append(f"{source} {c}/{r}")
+    return " · ".join(parts)
+
+
+def _prediction_line(row: sqlite3.Row, *, show_due: bool) -> str:
+    """One compact scorecard bullet for a prediction row."""
+    src = f"*({row['source']} {row['source_ref']})*"
+    if show_due:
+        return f"- `due {row['due_on']}` {row['claim']} {src}"
+    badge = _VERDICT_BADGE.get(row["status"], "❓")
+    line = f"- {badge} {row['claim']} {src}"
+    if row["rationale"]:
+        line += f"\n  - {row['rationale']}"
+    return line
+
+
+def render_scorecard_note() -> str:
+    """Signal/Scorecard.md — open calls up top, resolved log below."""
+    rows = db.all_predictions()
+    open_rows = [r for r in rows if r["status"] == "open"]
+    resolved_rows = [r for r in rows if r["status"] != "open"]
+
+    front = {
+        "kind": "digest-scorecard",
+        "open": len(open_rows),
+        "resolved": len(resolved_rows),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    lines: list[str] = ["---", yaml.safe_dump(front, sort_keys=False).strip(), "---", ""]
+    lines.append("# 🧾 Prediction Scorecard")
+    lines.append("")
+    lines.append(
+        "_Falsifiable calls extracted from essays, debates, and weekly contrarian "
+        "signals; judged at their horizon against the digest's own evidence._"
+    )
+    lines.append("")
+    lines.append(f"> [!success] {_hit_rate_line()}")
+    lines.append("")
+
+    if open_rows:
+        lines.append(f"## ⏳ Open Calls ({len(open_rows)})")
+        lines.append("")
+        for row in open_rows:
+            lines.append(_prediction_line(row, show_due=True))
+        lines.append("")
+
+    if resolved_rows:
+        lines.append(f"## 📜 Resolved ({len(resolved_rows)})")
+        lines.append("")
+        for row in resolved_rows:
+            lines.append(_prediction_line(row, show_due=False))
+        lines.append("")
+
+    if not rows:
+        lines.append("_No predictions tracked yet — they appear after the next essay/debate run._")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_scorecard(paths: Paths) -> int:
+    """Write Signal/Scorecard.md. Returns total predictions rendered."""
+    rows = db.all_predictions()
+    paths.signal_dir.mkdir(parents=True, exist_ok=True)
+    (paths.signal_dir / "Scorecard.md").write_text(
+        render_scorecard_note(), encoding="utf-8"
+    )
+    return len(rows)
+
+
 # append_run_log + RUN_LOG_HEADER now live in digest_core.obsidian.paths
 # (imported above); call sites use append_run_log unchanged.
 
@@ -742,6 +835,13 @@ def publish(date_iso: str | None = None) -> dict[str, int | str]:
         logger.info("obsidian: wrote %d storyline pages", storyline_count)
     except Exception as exc:  # noqa: BLE001
         logger.warning("obsidian: storyline write failed: %s", exc)
+
+    # Prediction scorecard — best-effort, DB-rendered
+    try:
+        n_preds = write_scorecard(paths)
+        logger.info("obsidian: wrote scorecard (%d predictions)", n_preds)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("obsidian: scorecard write failed: %s", exc)
 
     # Topic archives — only those with summaries
     topic_results: list[tuple[str, Path, int]] = []
@@ -867,6 +967,24 @@ def render_weekly_note(
         lines.append(f"> {macro_ai}")
         lines.append("")
 
+    # ── Scorecard retro: what we got right/wrong this week ───────────
+    try:
+        retro = db.predictions_resolved_between(monday.isoformat(), sunday.isoformat())
+        n_open = len(db.open_predictions())
+    except Exception:
+        retro, n_open = [], 0
+    if retro or n_open:
+        lines.append("## 🧾 Scorecard")
+        lines.append("")
+        lines.append(f"> [!success] {_hit_rate_line()}")
+        lines.append("")
+        for row in retro:
+            lines.append(_prediction_line(row, show_due=False))
+        if retro:
+            lines.append("")
+        lines.append(f"{n_open} call{'s' if n_open != 1 else ''} still open → [[Scorecard]]")
+        lines.append("")
+
     # ── Pointer to the companion items file ──────────────────────────
     # The full item replay (~95% of the old weekly's bulk) lives in a
     # separate note so the weekly itself stays a one-sitting mobile read.
@@ -971,6 +1089,15 @@ def publish_weekly(date_iso: str | None = None) -> dict:
         items_target = paths.weekly_dir / f"{weekly_items_name(week_iso)}.md"
         items_target.write_text(items_text, encoding="utf-8")
         logger.info("obsidian: wrote weekly items %s", items_target.name)
+
+    # Scorecard intake: the contrarian signal is the weekly's falsifiable call
+    contrarian = (synthesis.get("contrarian_signal") or "").strip()
+    if contrarian:
+        try:
+            from digest.predictions import extract_predictions
+            extract_predictions("weekly", week_iso, contrarian, made_on=date_iso)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("weekly: prediction extraction failed: %s", exc)
 
     append_run_log(
         paths,

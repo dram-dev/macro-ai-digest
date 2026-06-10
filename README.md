@@ -49,6 +49,9 @@ dashboard / backtest`
 - Storyline threading — persistent multi-day narratives (Claude-maintained
   running state + daily deltas); movers surface in the Brief, weekly themes
   are seeded from active storylines
+- Prediction scorecard — falsifiable calls extracted from essays / debate
+  syntheses / weekly contrarian signals, judged at their horizon against the
+  digest's own evidence (correct / incorrect / unclear with grace window)
 
 **Publish (Obsidian vault, `80 Digest/`):**
 - `Brief/YYYY-MM-DD Brief.md` — mobile-first front page: regime, top 5
@@ -63,6 +66,8 @@ dashboard / backtest`
   the full item replay lives in the companion `<YYYY-WW> Items.md`
 - `Investments/<TICKER>.md` — stock tracker notes with signal overlays
 - `_meta/Run Log.md` — append-only operations log
+- `Signal/Scorecard.md` — prediction hit rate by source, open calls, resolved
+  log; right/wrong retro also lands in the weekly + Brief scoreboard
 - HTML dashboard with cross-asset correlation + upcoming events overlay
 - Bull / bear / synthesis debate on the week's contested theses
 - Backtest report — source × topic outcome analysis
@@ -121,9 +126,10 @@ uv run digest stats
 ```
 
 CLI commands: `ingest`, `sources`, `triage`, `summarize`, `pipeline`, `publish`,
-`weekly`, `regime`, `ensemble`, `outcomes`, `cluster`, `storylines`, `signals`,
-`essay`, `debate`, `dashboard`, `sentiment`, `entities`, `stocks`, `calendar`,
-`velocity`, `backtest`, `recent`, `stats`, `health`, `security`, `init-db`.
+`weekly`, `regime`, `ensemble`, `outcomes`, `cluster`, `storylines`,
+`predictions`, `signals`, `essay`, `debate`, `dashboard`, `sentiment`,
+`entities`, `stocks`, `calendar`, `velocity`, `backtest`, `recent`, `stats`,
+`health`, `security`, `init-db`.
 
 ## Gmail first-run OAuth
 

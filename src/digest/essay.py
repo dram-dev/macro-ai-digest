@@ -316,6 +316,14 @@ def generate_essay(ref_date: date | None = None) -> dict[str, Any]:
     wc   = _word_count(essay_md)
     logger.info("essay: wrote %s (%d words, %d source items)", path.name, wc, len(rows))
 
+    # Scorecard intake — essays are the richest source of falsifiable calls
+    try:
+        from digest.predictions import extract_predictions
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        extract_predictions("essay", today, essay_md, made_on=today)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("essay: prediction extraction failed: %s", exc)
+
     return {
         "path":         str(path),
         "week":         week_iso,
