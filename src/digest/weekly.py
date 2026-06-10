@@ -5,13 +5,10 @@ obsidian.py to keep the Claude call logic in one layer and rendering in another.
 """
 from __future__ import annotations
 
-import json
 import logging
-import re
-import subprocess
 from typing import Any
 
-from digest.config import settings
+from digest.claude_cli import call_claude, parse_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -34,47 +31,11 @@ Return ONLY valid JSON with these exact keys:
 themes: 3-5 items. must_reads: exactly 5 items (pick the 5 highest-signal items across different topic areas)."""
 
 
-def _call_claude(prompt: str) -> str:
-    full = f"{SYSTEM_PROMPT}\n\n{prompt}"
-    cmd = ["claude", "-p", "--model", settings.summarizer_model, "--output-format", "json"]
-    result = subprocess.run(
-        cmd,
-        input=full,
-        capture_output=True,
-        text=True,
-        timeout=180,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"claude exit {result.returncode}: {result.stderr.strip()[:300]}"
-        )
-    try:
-        envelope = json.loads(result.stdout)
-        return envelope.get("result") or envelope.get("response") or result.stdout
-    except json.JSONDecodeError:
-        return result.stdout
-
-
-def _parse_synthesis(raw: str) -> dict[str, Any]:
-    raw = raw.strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    m = re.search(r"(\{.*\})", raw, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except json.JSONDecodeError:
-            pass
-    return {}
-
-
 def synthesize_week(
     rows: list,
     week_label: str,
     regime_framing: str = "",
+    storyline_context: str = "",
 ) -> dict[str, Any]:
     """Call Claude to produce a weekly synthesis over the given item rows.
 
@@ -82,6 +43,9 @@ def synthesize_week(
         rows: sqlite3.Row list from db.items_for_week(), pre-sorted by triage_score DESC.
         week_label: human label like "2026-W20 (May 11 – May 17)".
         regime_framing: optional macro regime context injected at prompt top.
+        storyline_context: optional "- Name: state" lines for the active
+            storylines, so themes extend tracked narratives instead of
+            rediscovering them from scratch each week.
 
     Returns:
         Parsed synthesis dict with keys: themes, must_reads, contrarian_signal,
@@ -104,17 +68,24 @@ def synthesize_week(
     header = f"Week: {week_label}\n"
     if regime_framing:
         header += f"Macro regime context: {regime_framing}\n"
+    if storyline_context:
+        header += (
+            "Active storylines the reader is already tracking (when a theme "
+            "continues one of these, say so by name and focus on what changed "
+            "this week rather than re-introducing the story):\n"
+            f"{storyline_context}\n"
+        )
     header += f"Total items with summaries: {len(rows)} (showing top {len(top)} by triage score)\n"
 
     prompt = header + "\n" + "\n\n".join(item_lines)
 
     try:
-        raw = _call_claude(prompt)
+        raw = call_claude(SYSTEM_PROMPT, prompt, timeout=180)
     except Exception as exc:
         logger.error("weekly: Claude call failed: %s", exc)
         return {}
 
-    synthesis = _parse_synthesis(raw)
+    synthesis = parse_json_object(raw)
     if not synthesis:
         logger.warning("weekly: unparseable synthesis response")
     return synthesis

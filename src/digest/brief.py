@@ -24,6 +24,7 @@ from digest.obsidian import (
     Paths,
     _chat_link,
     _title_display,
+    storyline_note_name,
     topic_label,
 )
 from digest_core.obsidian.render import row_get as _row_get, safe as _safe
@@ -152,6 +153,18 @@ def render_brief_note(date_iso: str) -> tuple[str, int]:
             if ids:
                 lines.append("> — " + " · ".join(f"`#{i}`" for i in ids))
             lines.append("")
+
+    # ── Storylines that moved today ──────────────────────────────────
+    try:
+        movers = db.storylines_moved_on(date_iso)
+    except Exception:
+        movers = []
+    if movers:
+        lines.append("## 📖 Storylines")
+        lines.append("")
+        for m in movers:
+            lines.append(f"- **[[{storyline_note_name(m['name'])}]]** — {m['delta']}")
+        lines.append("")
 
     # ── Scoreboard: signals that just resolved ───────────────────────
     try:

@@ -46,6 +46,9 @@ dashboard / backtest`
   stock tracker
 - Outcomes tracking — post-hoc validation of past signal calls
 - Cluster + narrative velocity — week-over-week momentum across clusters
+- Storyline threading — persistent multi-day narratives (Claude-maintained
+  running state + daily deltas); movers surface in the Brief, weekly themes
+  are seeded from active storylines
 
 **Publish (Obsidian vault, `80 Digest/`):**
 - `Brief/YYYY-MM-DD Brief.md` — mobile-first front page: regime, top 5
@@ -54,6 +57,8 @@ dashboard / backtest`
 - `Daily/YYYY-MM-DD.md` — full daily note with regime callout, top signals,
   per-topic summaries (long-tail items carry plain `#id` refs to stay light)
 - `Topics/<Topic>.md` — per-topic archive, idempotent upsert by item ID
+- `Storylines/<Name>.md` — one page per tracked narrative (current state +
+  newest-first timeline), plus a status-grouped index
 - `Weekly/<YYYY-WW>.md` — themes, must-reads, contrarian signal, weekly essay;
   the full item replay lives in the companion `<YYYY-WW> Items.md`
 - `Investments/<TICKER>.md` — stock tracker notes with signal overlays
@@ -116,8 +121,8 @@ uv run digest stats
 ```
 
 CLI commands: `ingest`, `sources`, `triage`, `summarize`, `pipeline`, `publish`,
-`weekly`, `regime`, `ensemble`, `outcomes`, `cluster`, `signals`, `essay`,
-`debate`, `dashboard`, `sentiment`, `entities`, `stocks`, `calendar`,
+`weekly`, `regime`, `ensemble`, `outcomes`, `cluster`, `storylines`, `signals`,
+`essay`, `debate`, `dashboard`, `sentiment`, `entities`, `stocks`, `calendar`,
 `velocity`, `backtest`, `recent`, `stats`, `health`, `security`, `init-db`.
 
 ## Gmail first-run OAuth

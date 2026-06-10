@@ -111,9 +111,14 @@ class Paths(_CorePaths):
     def brief_dir(self) -> Path:
         return self.digest_root / "Brief"
 
+    @property
+    def storylines_dir(self) -> Path:
+        return self.digest_root / "Storylines"
+
     def ensure(self) -> None:
         super().ensure()
         self.brief_dir.mkdir(parents=True, exist_ok=True)
+        self.storylines_dir.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def resolve(cls) -> "Paths":
@@ -592,6 +597,110 @@ def write_topic_archive(topic_slug: str, paths: Paths) -> tuple[Path, int]:
     return target, len(item_ids)
 
 
+# ── Storylines (Wave 2: multi-day narrative threading) ─────────────────
+
+_STATUS_BADGE = {"active": "🟢", "dormant": "💤", "resolved": "✅"}
+
+
+def storyline_note_name(name: str) -> str:
+    """Note name (no .md) for a storyline — the name with filename/wikilink
+    breakers stripped. Names are fixed at creation, so this is stable."""
+    clean = re.sub(r'[/\\:|#^\[\]?*"<>]', "-", name)
+    return re.sub(r"\s+", " ", clean).strip() or "Untitled storyline"
+
+
+def render_storyline_note(story: sqlite3.Row, deltas: list[sqlite3.Row]) -> str:
+    """One storyline page: current state on top, newest-first timeline below."""
+    from digest.storylines import parse_delta_item_ids
+
+    status = story["status"] or "active"
+    front = {
+        "slug": story["slug"],
+        "kind": "digest-storyline",
+        "status": status,
+        "delta_count": len(deltas),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    lines: list[str] = ["---", yaml.safe_dump(front, sort_keys=False).strip(), "---", ""]
+    lines.append(f"# 📖 {story['name']}")
+    lines.append("")
+
+    badge = _STATUS_BADGE.get(status, "🟢")
+    moved = story["last_moved"] or "never"
+    if status == "resolved":
+        lines.append(f"> [!success] {badge} Resolved — last moved {moved}")
+        if story["resolution"]:
+            lines.append(f"> {story['resolution']}")
+        lines.append(">")
+        lines.append(f"> {story['state']}")
+    else:
+        lines.append(f"> [!abstract] {badge} Where this stands *(as of {moved})*")
+        lines.append(f"> {story['state']}")
+    lines.append("")
+
+    if deltas:
+        lines.append("## Timeline")
+        lines.append("")
+        for d in deltas:
+            lines.append(f"### [[{d['date']}]]")
+            lines.append("")
+            lines.append(d["delta"])
+            ids = parse_delta_item_ids(d["item_ids"])
+            if ids:
+                lines.append("")
+                lines.append("— " + " · ".join(f"`#{i}`" for i in ids))
+            lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_storylines_index(stories: list[sqlite3.Row]) -> str:
+    """The Storylines index note: active first, then dormant, then resolved."""
+    front = {
+        "kind": "digest-storylines-index",
+        "count": len(stories),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    lines: list[str] = ["---", yaml.safe_dump(front, sort_keys=False).strip(), "---", ""]
+    lines.append("# 📖 Storylines")
+    lines.append("")
+    lines.append("_Persistent narratives tracked across days. Movers surface in the daily Brief._")
+    lines.append("")
+    by_status: dict[str, list[sqlite3.Row]] = {}
+    for s in stories:
+        by_status.setdefault(s["status"] or "active", []).append(s)
+    for status, heading in (
+        ("active", "🟢 Active"), ("dormant", "💤 Dormant"), ("resolved", "✅ Resolved"),
+    ):
+        group = by_status.get(status)
+        if not group:
+            continue
+        lines.append(f"## {heading}")
+        lines.append("")
+        for s in group:
+            moved = s["last_moved"] or "—"
+            lines.append(f"- [[{storyline_note_name(s['name'])}]] — *last moved {moved}*")
+        lines.append("")
+    if not stories:
+        lines.append("_No storylines tracked yet._")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_storylines(paths: Paths) -> int:
+    """Write every storyline page + the index. Returns number of storylines."""
+    stories = db.get_storylines(statuses=("active", "dormant", "resolved"))
+    paths.storylines_dir.mkdir(parents=True, exist_ok=True)
+    for story in stories:
+        deltas = db.get_storyline_deltas(story["id"])
+        text = render_storyline_note(story, deltas)
+        target = paths.storylines_dir / f"{storyline_note_name(story['name'])}.md"
+        target.write_text(text, encoding="utf-8")
+    index = render_storylines_index(stories)
+    (paths.storylines_dir / "Storylines.md").write_text(index, encoding="utf-8")
+    return len(stories)
+
+
 # append_run_log + RUN_LOG_HEADER now live in digest_core.obsidian.paths
 # (imported above); call sites use append_run_log unchanged.
 
@@ -626,6 +735,14 @@ def publish(date_iso: str | None = None) -> dict[str, int | str]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("obsidian: brief write failed: %s", exc)
 
+    # Storyline pages + index — best-effort like the brief
+    storyline_count = 0
+    try:
+        storyline_count = write_storylines(paths)
+        logger.info("obsidian: wrote %d storyline pages", storyline_count)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("obsidian: storyline write failed: %s", exc)
+
     # Topic archives — only those with summaries
     topic_results: list[tuple[str, Path, int]] = []
     for slug in db.topics_with_summaries():
@@ -652,6 +769,7 @@ def publish(date_iso: str | None = None) -> dict[str, int | str]:
         "brief_path": brief_path,
         "daily_items": daily_count,
         "topic_archives": len(topic_results),
+        "storylines": storyline_count,
         "items_stamped": len(stamped),
     }
 
@@ -824,7 +942,21 @@ def publish_weekly(date_iso: str | None = None) -> dict:
     except Exception as exc:
         logger.warning("weekly: regime computation failed: %s", exc)
 
-    synthesis = synthesize_week(rows, week_label, regime_framing=regime_framing) if rows else {}
+    storyline_context = ""
+    try:
+        from digest.storylines import storyline_context_for_weekly
+        storyline_context = storyline_context_for_weekly()
+    except Exception as exc:
+        logger.warning("weekly: storyline context failed: %s", exc)
+
+    synthesis = (
+        synthesize_week(
+            rows, week_label,
+            regime_framing=regime_framing,
+            storyline_context=storyline_context,
+        )
+        if rows else {}
+    )
 
     paths = Paths.resolve()
     paths.ensure()

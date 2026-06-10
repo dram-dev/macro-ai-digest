@@ -188,6 +188,14 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
         from digest.connections import run_connections
         return f"{len(run_connections())} connection threads found"
 
+    def _storylines() -> str:
+        from digest.storylines import run_storylines
+        sl = run_storylines()
+        return (
+            f"storylines: moved={sl['moved']} new={sl['new']} "
+            f"resolved={sl['resolved']} dormant={sl['dormant']}"
+        )
+
     def _ensemble() -> str:
         from digest.ensemble import run_ensemble
         ec = run_ensemble()
@@ -228,12 +236,13 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
 
     enrichment_stages = [
         ("3c", "connections", _connections),
-        ("3d", "ensemble scoring", _ensemble),
-        ("3e", "sentiment", _sentiment),
-        ("3f", "entities", _entities),
-        ("3g", "cluster", _cluster),
-        ("3h", "stock tracker", _stocks),
-        ("3i", "outcomes", _outcomes),
+        ("3d", "storylines", _storylines),
+        ("3e", "ensemble scoring", _ensemble),
+        ("3f", "sentiment", _sentiment),
+        ("3g", "entities", _entities),
+        ("3h", "cluster", _cluster),
+        ("3i", "stock tracker", _stocks),
+        ("3j", "outcomes", _outcomes),
     ]
     for stage_id, name, runner in enrichment_stages:
         console.rule(f"[bold cyan]stage {stage_id}: {name}")
@@ -407,6 +416,34 @@ def outcomes(horizon: int, limit: int) -> None:
         f"confirmed={counts['confirmed']} contradicted={counts['contradicted']} "
         f"neutral={counts['neutral']} pending={counts['pending']}"
     )
+
+
+@main.command()
+@click.option(
+    "--date",
+    "date_iso",
+    default=None,
+    help="Date to track in YYYY-MM-DD (default: today UTC)",
+)
+def storylines(date_iso: str | None) -> None:
+    """Update persistent storylines from the day's items, then write the pages."""
+    from digest.obsidian import Paths, write_storylines
+    from digest.storylines import run_storylines
+
+    db.init_db()
+    console.rule("[bold cyan]storylines")
+    counts = run_storylines(date_iso)
+    console.print(
+        f"  [green]✓[/green] moved={counts['moved']} new={counts['new']} "
+        f"resolved={counts['resolved']} dormant={counts['dormant']}"
+    )
+    try:
+        paths = Paths.resolve()
+        paths.ensure()
+        n = write_storylines(paths)
+        console.print(f"  [dim]→ {n} storyline pages + index written[/dim]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [yellow]⚠[/yellow] page write skipped: {exc}")
 
 
 @main.command()
