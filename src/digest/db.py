@@ -328,6 +328,25 @@ def upsert_outcome(
         )
 
 
+def recently_resolved_outcomes(hours: int = 36) -> list[sqlite3.Row]:
+    """Quant-signal outcomes that resolved (non-pending) in the last N hours.
+
+    Joined to item title/url/source so the daily Brief can show a scoreboard
+    of which past signals were just confirmed or contradicted.
+    """
+    sql = """
+        SELECT so.item_id, so.outcome, so.original_z, so.followup_z,
+               so.horizon_days, so.checked_at, i.title, i.url, i.source
+        FROM signal_outcomes so
+        JOIN items i ON i.id = so.item_id
+        WHERE so.outcome != 'pending'
+          AND so.checked_at >= datetime('now', ?)
+        ORDER BY so.checked_at DESC, so.item_id DESC
+    """
+    with get_conn() as conn:
+        return conn.execute(sql, (f"-{hours} hours",)).fetchall()
+
+
 def get_outcomes(item_ids: list[int]) -> dict[int, sqlite3.Row]:
     """Return outcome rows keyed by item_id (7-day horizon, most recent check)."""
     if not item_ids:

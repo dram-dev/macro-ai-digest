@@ -55,7 +55,7 @@ For each item, you produce a JSON object with five fields:
 
 1. "topic": one of [fed_markets, china, ai_thinkers, ai_capex, ai_business_apps, ai_semis, data_viz, other]
 2. "summary": 2-3 sentences. State the actual content — what was reported, claimed, or shown. No filler like "this article discusses..."
-3. "why_it_matters": 1-2 sentences. Frame the implication FOR THIS READER given their interests. Be specific. Bad: "this is important for AI." Good: "Suggests hyperscaler 2026 capex guides may surprise to the upside, with implications for NVDA Q3 expectations."
+3. "why_it_matters": 1-2 sentences. Frame the implication FOR THIS READER given their interests. Be specific. Bad: "this is important for AI." Good: "Suggests hyperscaler 2026 capex guides may surprise to the upside, with implications for NVDA Q3 expectations." NEVER open with stock regime framing ("In a tightening macro regime...", "In a higher-for-longer rate environment...") or reader-labeling ("For a financial services leader..."). The reader already knows the regime and who they are — spend the words on the item-specific stake: a number, a name, a mechanism, a date.
 4. "confidence": "low" | "medium" | "high" — how reliable is this signal? High = primary source (filing, FRED print, named expert). Medium = reputable secondary reporting. Low = social-media speculation, anonymous posts, single-source claims.
 5. "see_also": a list of 0-3 short phrases describing topics or events from the user's domain that this item connects to. Examples: "2s10s spread inversion", "Microsoft Q1 capex guide", "Karpathy Software 3.0 thesis". Empty list is acceptable.
 
@@ -170,7 +170,10 @@ def summarize_item(item: dict[str, Any], regime_framing: str = "") -> SummaryOut
 
     user_prompt = _build_user_prompt(item)
     if regime_framing:
-        user_prompt = f"[Macro regime: {regime_framing}]\n\n{user_prompt}"
+        user_prompt = (
+            f"[Background — current macro regime: {regime_framing}. "
+            f"Context only; do NOT restate it in your output.]\n\n{user_prompt}"
+        )
     raw = backend_fn(SYSTEM_PROMPT, user_prompt, _backend_config())
     parsed = extract_json(raw)
     if not parsed:

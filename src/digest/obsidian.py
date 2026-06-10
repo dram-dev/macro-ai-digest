@@ -4,8 +4,10 @@ Writes triage + summarizer output to an Obsidian vault as Markdown.
 
 Layout:
     <vault>/<digest_dir>/
+    ├── Brief/YYYY-MM-DD Brief.md   — mobile-first front page (brief.py)
     ├── Daily/YYYY-MM-DD.md         — daily note, regenerated each run
     ├── Topics/<topic>.md           — topic archives, newest-on-top, YAML index
+    ├── Weekly/<week>.md            — weekly synthesis (+ companion "<week> Items.md")
     └── _meta/Run Log.md            — append-only operations log
 
 Daily notes are idempotent: rewriting the same day's note with the same data
@@ -105,6 +107,14 @@ def topic_filename(slug: str) -> str:
 class Paths(_CorePaths):
     """macro vault paths — settings-driven resolve() over the core layout."""
 
+    @property
+    def brief_dir(self) -> Path:
+        return self.digest_root / "Brief"
+
+    def ensure(self) -> None:
+        super().ensure()
+        self.brief_dir.mkdir(parents=True, exist_ok=True)
+
     @classmethod
     def resolve(cls) -> "Paths":
         if not settings.obsidian_vault_path:
@@ -129,7 +139,23 @@ def _chat_link(row: sqlite3.Row) -> str:
     return chat_link(row, digest_name="macro/AI digest")
 
 
-def _render_summary_item(row: sqlite3.Row) -> str:
+def _id_ref(row: sqlite3.Row) -> str:
+    """Plain `#id` ref — greppable for thesis-testing, ~50x lighter than the
+    URL-encoded chat link. Long-tail items use this; Brief top signals,
+    clipped items, and weekly must-reads keep the full seeded chat link."""
+    return f"`#{row['id']}`"
+
+
+def _title_display(title: str) -> str:
+    """Sanitise a title for callout headings: strip newlines, pipes (break
+    tables) and square brackets (break link syntax), cap length."""
+    return (
+        title.replace("\n", " ").replace("|", "│")
+             .replace("[", "(").replace("]", ")")[:110]
+    )
+
+
+def _render_summary_item(row: sqlite3.Row, *, with_chat_link: bool = False) -> str:
     """Render one summarized item as a topic-coloured Obsidian callout block."""
     title      = _safe(row["title"]) or "(untitled)"
     url        = _safe(row["url"])
@@ -144,11 +170,7 @@ def _render_summary_item(row: sqlite3.Row) -> str:
     topic_slug = _safe(_row_get(row, "topic")) or "other"
 
     callout_type  = TOPIC_CALLOUT.get(topic_slug, "note")
-    # Sanitise title: strip pipes (break tables) and square brackets (break link syntax)
-    title_display = (
-        title.replace("\n", " ").replace("|", "│")
-             .replace("[", "(").replace("]", ")")[:110]
-    )
+    title_display = _title_display(title)
     heading = (
         f"> [!{callout_type}]+ [{title_display}]({url})" if url
         else f"> [!{callout_type}]+ {title_display}"
@@ -168,7 +190,7 @@ def _render_summary_item(row: sqlite3.Row) -> str:
         meta_parts.append(author)
     if published:
         meta_parts.append(published)
-    meta_parts.append(_chat_link(row))
+    meta_parts.append(_chat_link(row) if with_chat_link else _id_ref(row))
     meta_line = "> " + " · ".join(meta_parts)
 
     lines = [
@@ -195,7 +217,7 @@ def _render_unsummarized_item(row: sqlite3.Row) -> str:
     parts  = [f"- {link}", f"*{source}*"]
     if score is not None:
         parts.append(f"`⭐ {score:.2f}`")
-    parts.append(_chat_link(row))
+    parts.append(_id_ref(row))
     return "  ·  ".join(parts)
 
 
@@ -208,6 +230,28 @@ def _group_by_topic(rows: list[sqlite3.Row]) -> dict[str, list[sqlite3.Row]]:
     for row in rows:
         groups.setdefault(row["topic"] or "other", []).append(row)
     return groups
+
+
+def _topic_sections(rows: list[sqlite3.Row], heading_prefix: str = "##") -> list[str]:
+    """Topic-grouped summary-item sections: canonical order first, leftovers after."""
+    groups = _group_by_topic(rows)
+    ordered = [s for s in TOPIC_ORDER if s in groups] + sorted(
+        s for s in groups if s not in TOPIC_ORDER
+    )
+    lines: list[str] = []
+    for slug in ordered:
+        topic_rows = groups[slug]
+        emoji = TOPIC_EMOJI.get(slug, "📌")
+        n     = len(topic_rows)
+        lines.append(
+            f"{heading_prefix} {emoji} {topic_label(slug)}  ·  {_wikilink(slug)}"
+            f"  ·  {n} item{'s' if n > 1 else ''}"
+        )
+        lines.append("")
+        for row in topic_rows:
+            lines.append(_render_summary_item(row))
+            lines.append("")
+    return lines
 
 
 def render_daily_note(
@@ -241,6 +285,8 @@ def render_daily_note(
     }
     lines: list[str] = ["---", yaml.safe_dump(front, sort_keys=False).strip(), "---", ""]
     lines.append(f"# Digest — {date_iso}")
+    lines.append("")
+    lines.append(f"_Front page: [[{date_iso} Brief]]_")
     lines.append("")
 
     # ── Macro Regime callout ──────────────────────────────────────────────
@@ -277,7 +323,7 @@ def render_daily_note(
         lines.append("## 🔗 Connection Threads")
         lines.append("")
         lines.append(
-            "_Cross-item patterns identified by Claude. Click a `#id` link to open a seeded chat._"
+            "_Cross-item patterns identified by Claude. `#id` refs match items below._"
         )
         lines.append("")
         for thread in threads:
@@ -303,35 +349,14 @@ def render_daily_note(
         )
         lines.append("")
         for row in clipped_rows:
-            lines.append(_render_summary_item(row))
+            lines.append(_render_summary_item(row, with_chat_link=True))
             lines.append("")
 
     # ── Auto-curated summarized section, grouped by topic ────────────
-    groups = _group_by_topic(auto_rows)
     if auto_rows:
         lines.append("## 📑 Summarized")
         lines.append("")
-        for slug in TOPIC_ORDER:
-            rows = groups.get(slug)
-            if not rows:
-                continue
-            emoji = TOPIC_EMOJI.get(slug, "📌")
-            n     = len(rows)
-            lines.append(f"## {emoji} {topic_label(slug)}  ·  {_wikilink(slug)}  ·  {n} item{'s' if n > 1 else ''}")
-            lines.append("")
-            for row in rows:
-                lines.append(_render_summary_item(row))
-                lines.append("")
-        # Any topics not in canonical order (shouldn't normally happen)
-        leftover = [s for s in groups if s not in TOPIC_ORDER]
-        for slug in sorted(leftover):
-            emoji = TOPIC_EMOJI.get(slug, "📌")
-            n     = len(groups[slug])
-            lines.append(f"## {emoji} {topic_label(slug)}  ·  {_wikilink(slug)}  ·  {n} item{'s' if n > 1 else ''}")
-            lines.append("")
-            for row in groups[slug]:
-                lines.append(_render_summary_item(row))
-                lines.append("")
+        lines.extend(_topic_sections(auto_rows, heading_prefix="##"))
 
     # ── Kept-unsummarized section ────────────────────────────────────
     if kept_unsum:
@@ -409,10 +434,7 @@ def _render_topic_item(row: sqlite3.Row, topic_slug: str) -> str:
     published  = _safe(row["published_at"])[:10]
 
     callout_type  = TOPIC_CALLOUT.get(topic_slug, "note")
-    title_display = (
-        title.replace("\n", " ").replace("|", "│")
-             .replace("[", "(").replace("]", ")")[:110]
-    )
+    title_display = _title_display(title)
     daily_link = f"[[{ingested}]]" if ingested else ""
     heading = (
         f"> [!{callout_type}]+ [{title_display}]({url})" if url
@@ -435,7 +457,7 @@ def _render_topic_item(row: sqlite3.Row, topic_slug: str) -> str:
             meta_parts.append(f"`⭐ {float(score):.2f}`")
         except (TypeError, ValueError):
             pass
-    meta_parts.append(_chat_link(row))
+    meta_parts.append(_id_ref(row))
     meta_line = "> " + " · ".join(meta_parts)
 
     parts = [
@@ -594,6 +616,16 @@ def publish(date_iso: str | None = None) -> dict[str, int | str]:
     daily_path, daily_count = write_daily_note(date_iso, paths)
     logger.info("obsidian: wrote daily %s (%d items)", daily_path.name, daily_count)
 
+    # Brief — the mobile-first front page. Best-effort: never blocks the daily.
+    brief_path = ""
+    try:
+        from digest.brief import write_brief_note
+        bpath, n_picks = write_brief_note(date_iso, paths)
+        brief_path = str(bpath)
+        logger.info("obsidian: wrote brief %s (%d top picks)", bpath.name, n_picks)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("obsidian: brief write failed: %s", exc)
+
     # Topic archives — only those with summaries
     topic_results: list[tuple[str, Path, int]] = []
     for slug in db.topics_with_summaries():
@@ -617,6 +649,7 @@ def publish(date_iso: str | None = None) -> dict[str, int | str]:
     return {
         "date": date_iso,
         "daily_path": str(daily_path),
+        "brief_path": brief_path,
         "daily_items": daily_count,
         "topic_archives": len(topic_results),
         "items_stamped": len(stamped),
@@ -692,7 +725,7 @@ def render_weekly_note(
                 topic_disp  = topic_label(slug)
                 callout_t   = TOPIC_CALLOUT.get(slug, "note")
                 lines.append(f"> [!{callout_t}]+ 📌 {link}")
-                lines.append(f"> `{topic_disp}` — {reason}")
+                lines.append(f"> `{topic_disp}` · {_chat_link(row)} — {reason}")
             else:
                 lines.append(f"> [!note]+ 📌 Item #{item_id}")
                 lines.append(f"> {reason}")
@@ -716,31 +749,45 @@ def render_weekly_note(
         lines.append(f"> {macro_ai}")
         lines.append("")
 
-    # ── All items grouped by topic ───────────────────────────────────
-    groups = _group_by_topic(list(rows))
+    # ── Pointer to the companion items file ──────────────────────────
+    # The full item replay (~95% of the old weekly's bulk) lives in a
+    # separate note so the weekly itself stays a one-sitting mobile read.
     lines.append("## 📑 All Items This Week")
     lines.append("")
-    for slug in TOPIC_ORDER:
-        topic_rows = groups.get(slug)
-        if not topic_rows:
-            continue
-        emoji = TOPIC_EMOJI.get(slug, "📌")
-        n     = len(topic_rows)
-        lines.append(f"### {emoji} {topic_label(slug)}  ·  {_wikilink(slug)}  ·  {n} item{'s' if n > 1 else ''}")
-        lines.append("")
-        for row in topic_rows:
-            lines.append(_render_summary_item(row))
-            lines.append("")
-    leftover = [s for s in groups if s not in TOPIC_ORDER]
-    for slug in sorted(leftover):
-        emoji = TOPIC_EMOJI.get(slug, "📌")
-        n     = len(groups[slug])
-        lines.append(f"### {emoji} {topic_label(slug)}  ·  {n} item{'s' if n > 1 else ''}")
-        lines.append("")
-        for row in groups[slug]:
-            lines.append(_render_summary_item(row))
-            lines.append("")
+    lines.append(f"All **{len(rows)}** items → [[{weekly_items_name(week_iso)}]]")
+    lines.append("")
 
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def weekly_items_name(week_iso: str) -> str:
+    """Note name (no .md) of the weekly companion item archive."""
+    return f"{week_iso} Items"
+
+
+def render_weekly_items_note(
+    week_iso: str,
+    monday: date,
+    sunday: date,
+    rows: list[sqlite3.Row],
+) -> str:
+    """Companion note holding the full topic-grouped item replay for a week."""
+    period = f"{monday.isoformat()} – {sunday.isoformat()}"
+    front = {
+        "week": week_iso,
+        "period": period,
+        "kind": "digest-weekly-items",
+        "item_count": len(rows),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    lines: list[str] = ["---", yaml.safe_dump(front, sort_keys=False).strip(), "---", ""]
+    lines.append(f"# 📑 All Items — {week_iso}")
+    lines.append(f"_{period} · synthesis in [[{week_iso}]]_")
+    lines.append("")
+    if not rows:
+        lines.append("_No summarized items this week._")
+        return "\n".join(lines).rstrip() + "\n"
+    lines.extend(_topic_sections(list(rows), heading_prefix="##"))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -786,6 +833,12 @@ def publish_weekly(date_iso: str | None = None) -> dict:
     target = paths.weekly_dir / f"{week_iso}.md"
     target.write_text(text, encoding="utf-8")
     logger.info("obsidian: wrote weekly %s (%d items)", target.name, len(rows))
+
+    if rows:
+        items_text = render_weekly_items_note(week_iso, monday, sunday, rows)
+        items_target = paths.weekly_dir / f"{weekly_items_name(week_iso)}.md"
+        items_target.write_text(items_text, encoding="utf-8")
+        logger.info("obsidian: wrote weekly items %s", items_target.name)
 
     append_run_log(
         paths,

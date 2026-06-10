@@ -53,7 +53,9 @@ def test_render_topic_archive_uses_core_index_and_markers(fresh_db, make_item):
     assert len(item_ids) == 1
     assert INDEX_BEGIN in text                       # core-built index block
     assert obsidian.ITEM_BEGIN.format(id=item_ids[0]) in text
-    assert "https://claude.ai/new?q=" in text        # core chat link
+    # link diet: archives carry a plain id ref, not the URL-encoded chat link
+    assert f"`#{item_ids[0]}`" in text
+    assert "https://claude.ai/new?q=" not in text
     assert "Fed holds rates" in text
 
 
@@ -96,6 +98,66 @@ def test_topic_archive_cap_rolls_over_by_month(fresh_db, make_item, monkeypatch,
     mtime = rollovers[0].stat().st_mtime
     obsidian.write_topic_archive("china", paths)
     assert rollovers[0].stat().st_mtime == mtime
+
+
+def test_daily_link_diet_keeps_chat_links_on_clipped_only(fresh_db, make_item):
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    db.upsert_items([
+        make_item(source="rss", source_id="r1", title="Auto item"),
+        make_item(source="clipped", source_id="k1", title="Clipped item"),
+    ])
+    with db.get_conn() as conn:
+        conn.execute(
+            """UPDATE items SET topic='ai_capex', triage_decision='keep',
+               summary='S', why_it_matters='W', confidence='high', triage_score=0.5"""
+        )
+
+    text, item_ids = obsidian.render_daily_note(today)
+    assert len(item_ids) == 2
+    assert f"_Front page: [[{today} Brief]]_" in text
+    # exactly one seeded chat link — the clipped item; the auto item gets `#id`
+    assert text.count("https://claude.ai/new?q=") == 1
+    with db.get_conn() as conn:
+        rss_id = conn.execute(
+            "SELECT id FROM items WHERE source_id='r1'"
+        ).fetchone()["id"]
+    assert f"`#{rss_id}`" in text
+
+
+def test_weekly_split_moves_items_to_companion_note(fresh_db, make_item):
+    from datetime import date, datetime, timezone
+    db.upsert_items([make_item(source_id="w1", title="Weekly item one")])
+    with db.get_conn() as conn:
+        conn.execute(
+            """UPDATE items SET topic='ai_semis', triage_decision='keep',
+               summary='S', why_it_matters='W', confidence='high', triage_score=0.9"""
+        )
+    today = datetime.now(timezone.utc).date()
+    monday = today.fromordinal(today.toordinal() - today.weekday())
+    sunday = date.fromordinal(monday.toordinal() + 6)
+    rows = db.items_for_week(monday.isoformat(), sunday.isoformat())
+    assert len(rows) == 1
+    week_iso = monday.strftime("%G-W%V")
+    synthesis = {
+        "themes": [{"title": "T1", "description": "D1"}],
+        "must_reads": [{"item_id": rows[0]["id"], "reason": "Primary source."}],
+    }
+
+    main = obsidian.render_weekly_note(week_iso, monday, sunday, synthesis, rows)
+    items = obsidian.render_weekly_items_note(week_iso, monday, sunday, rows)
+
+    # main: synthesis + pointer, no item replay; must-read keeps the chat link
+    assert "## 🎯 Themes of the Week" in main
+    assert f"[[{obsidian.weekly_items_name(week_iso)}]]" in main
+    assert "Weekly item one" not in main.split("## 📌 Must-Reads")[0]
+    assert "## 📑 All Items This Week" in main
+    assert main.count("https://claude.ai/new?q=") == 1
+    # companion: full replay with plain id refs, linking back to synthesis
+    assert "Weekly item one" in items
+    assert f"`#{rows[0]['id']}`" in items
+    assert f"[[{week_iso}]]" in items
+    assert "https://claude.ai/new?q=" not in items
 
 
 def test_topic_archive_cap_disabled_keeps_single_file(fresh_db, make_item, monkeypatch):
