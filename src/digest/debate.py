@@ -216,6 +216,13 @@ def generate_debate(ref_date: date | None = None) -> dict:
     path.write_text("\n".join(lines), encoding="utf-8")
     logger.info("debate: wrote %s", path.name)
 
+    # Scorecard intake — the synthesis carries the house positioning call
+    try:
+        from digest.predictions import extract_predictions
+        extract_predictions("debate", today.isoformat(), synthesis, made_on=today.isoformat())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("debate: prediction extraction failed: %s", exc)
+
     return {
         "path":   str(path),
         "week":   monday.isoformat(),

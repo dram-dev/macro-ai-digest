@@ -38,6 +38,7 @@ EVENTS_AHEAD_DAYS = 7
 EVENTS_CAP = 6
 
 _OUTCOME_BADGE = {"confirmed": "✅", "contradicted": "❌", "neutral": "⚖️"}
+_CALL_BADGE = {"correct": "✅", "incorrect": "❌", "unclear": "❓"}
 
 
 def _top_picks(rows: list[sqlite3.Row]) -> list[sqlite3.Row]:
@@ -166,14 +167,24 @@ def render_brief_note(date_iso: str) -> tuple[str, int]:
             lines.append(f"- **[[{storyline_note_name(m['name'])}]]** — {m['delta']}")
         lines.append("")
 
-    # ── Scoreboard: signals that just resolved ───────────────────────
+    # ── Scoreboard: signals + predictions that just resolved ─────────
     try:
         resolved = db.recently_resolved_outcomes(hours=36)
     except Exception:
         resolved = []
-    if resolved:
-        lines.append("## 🔁 Scoreboard — signals resolved since yesterday")
+    try:
+        calls = db.predictions_resolved_since(hours=36)
+    except Exception:
+        calls = []
+    if resolved or calls:
+        lines.append("## 🔁 Scoreboard — resolved since yesterday")
         lines.append("")
+        for row in calls[:SCOREBOARD_CAP]:
+            badge = _CALL_BADGE.get(row["status"], "❓")
+            lines.append(
+                f"- {badge} **call {row['status']}** — {row['claim']} "
+                f"*({row['source']} {row['source_ref']})*"
+            )
         for row in resolved[:SCOREBOARD_CAP]:
             badge = _OUTCOME_BADGE.get(row["outcome"], "⚖️")
             title = _title_display(_safe(row["title"]) or "(untitled)")

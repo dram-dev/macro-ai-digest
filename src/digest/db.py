@@ -117,6 +117,24 @@ MIGRATIONS = [
         UNIQUE(storyline_id, date)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_storyline_deltas_date ON storyline_deltas(date)",
+    # Wave 3: prediction scorecard (falsifiable calls from essays/debates/weeklies)
+    """CREATE TABLE IF NOT EXISTS predictions (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        source       TEXT NOT NULL,
+        source_ref   TEXT NOT NULL,
+        made_on      TEXT NOT NULL,
+        due_on       TEXT NOT NULL,
+        claim        TEXT NOT NULL,
+        observable   TEXT NOT NULL,
+        direction    TEXT,
+        status       TEXT NOT NULL DEFAULT 'open',
+        rationale    TEXT,
+        evidence_ids TEXT,
+        resolved_on  TEXT,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(source, source_ref, claim)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_predictions_status ON predictions(status, due_on)",
 ]
 
 
@@ -1112,3 +1130,100 @@ def storylines_moved_on(date_iso: str) -> list[sqlite3.Row]:
     """
     with get_conn() as conn:
         return conn.execute(sql, (date_iso,)).fetchall()
+
+
+# ── Predictions (Wave 3: scorecard for essay/debate/weekly calls) ──────
+
+_PREDICTION_COLS = (
+    "id, source, source_ref, made_on, due_on, claim, observable, direction, "
+    "status, rationale, evidence_ids, resolved_on"
+)
+
+
+def insert_predictions(preds: list[dict]) -> int:
+    """Insert extracted predictions; (source, source_ref, claim) dupes are
+    ignored so re-extraction over the same document is idempotent. Returns
+    the number actually inserted."""
+    sql = """
+        INSERT OR IGNORE INTO predictions
+            (source, source_ref, made_on, due_on, claim, observable, direction)
+        VALUES
+            (:source, :source_ref, :made_on, :due_on, :claim, :observable, :direction)
+    """
+    inserted = 0
+    with get_conn() as conn:
+        for p in preds:
+            cur = conn.execute(sql, p)
+            inserted += cur.rowcount or 0
+    return inserted
+
+
+def open_predictions(due_by: str | None = None) -> list[sqlite3.Row]:
+    """Open predictions, optionally only those due on/before a date. Oldest due first."""
+    sql = f"SELECT {_PREDICTION_COLS} FROM predictions WHERE status = 'open'"
+    params: tuple = ()
+    if due_by:
+        sql += " AND due_on <= ?"
+        params = (due_by,)
+    sql += " ORDER BY due_on ASC, id ASC"
+    with get_conn() as conn:
+        return conn.execute(sql, params).fetchall()
+
+
+def resolve_prediction(
+    pred_id: int, status: str, rationale: str, evidence_ids: list[int], resolved_on: str
+) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE predictions SET status = ?, rationale = ?, evidence_ids = ?, "
+            "resolved_on = ? WHERE id = ?",
+            (status, rationale, json.dumps(evidence_ids), resolved_on, pred_id),
+        )
+
+
+def predictions_resolved_since(hours: int = 36) -> list[sqlite3.Row]:
+    """Predictions resolved in the last N hours (for the Brief scoreboard)."""
+    sql = f"""
+        SELECT {_PREDICTION_COLS} FROM predictions
+        WHERE status != 'open'
+          AND resolved_on >= date('now', ?)
+        ORDER BY resolved_on DESC, id DESC
+    """
+    days = max(1, round(hours / 24))
+    with get_conn() as conn:
+        return conn.execute(sql, (f"-{days} days",)).fetchall()
+
+
+def predictions_resolved_between(start_iso: str, end_iso: str) -> list[sqlite3.Row]:
+    """Predictions resolved within [start, end] (weekly retro)."""
+    sql = f"""
+        SELECT {_PREDICTION_COLS} FROM predictions
+        WHERE status != 'open'
+          AND resolved_on BETWEEN ? AND ?
+        ORDER BY resolved_on DESC, id DESC
+    """
+    with get_conn() as conn:
+        return conn.execute(sql, (start_iso, end_iso)).fetchall()
+
+
+def all_predictions(limit: int = 200) -> list[sqlite3.Row]:
+    """All predictions for the scorecard: open first (soonest due), then resolved (newest)."""
+    sql = f"""
+        SELECT {_PREDICTION_COLS} FROM predictions
+        ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END,
+                 CASE WHEN status = 'open' THEN due_on ELSE '' END ASC,
+                 resolved_on DESC, id DESC
+        LIMIT ?
+    """
+    with get_conn() as conn:
+        return conn.execute(sql, (limit,)).fetchall()
+
+
+def prediction_stats() -> dict[str, dict[str, int]]:
+    """Counts by source and status, e.g. {'essay': {'correct': 3, 'open': 2}}."""
+    sql = "SELECT source, status, COUNT(*) AS n FROM predictions GROUP BY source, status"
+    out: dict[str, dict[str, int]] = {}
+    with get_conn() as conn:
+        for row in conn.execute(sql).fetchall():
+            out.setdefault(row["source"], {})[row["status"]] = row["n"]
+    return out

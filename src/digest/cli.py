@@ -234,6 +234,14 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
             f"contradicted={oc['contradicted']} pending={oc['pending']}"
         )
 
+    def _predictions() -> str:
+        from digest.predictions import resolve_due_predictions
+        pc = resolve_due_predictions()
+        return (
+            f"predictions: due={pc['due']} correct={pc['correct']} "
+            f"incorrect={pc['incorrect']} unclear={pc['unclear']} deferred={pc['deferred']}"
+        )
+
     enrichment_stages = [
         ("3c", "connections", _connections),
         ("3d", "storylines", _storylines),
@@ -243,6 +251,7 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
         ("3h", "cluster", _cluster),
         ("3i", "stock tracker", _stocks),
         ("3j", "outcomes", _outcomes),
+        ("3k", "predictions", _predictions),
     ]
     for stage_id, name, runner in enrichment_stages:
         console.rule(f"[bold cyan]stage {stage_id}: {name}")
@@ -444,6 +453,48 @@ def storylines(date_iso: str | None) -> None:
         console.print(f"  [dim]→ {n} storyline pages + index written[/dim]")
     except Exception as exc:  # noqa: BLE001
         console.print(f"  [yellow]⚠[/yellow] page write skipped: {exc}")
+
+
+@main.command()
+@click.option(
+    "--backfill",
+    is_flag=True,
+    help="Also extract predictions from existing Essays/ and Debate/ files in the vault",
+)
+def predictions(backfill: bool) -> None:
+    """Resolve due predictions and rewrite the Signal/Scorecard note."""
+    from digest.obsidian import Paths, write_scorecard
+    from digest.predictions import extract_predictions, resolve_due_predictions
+
+    db.init_db()
+    console.rule("[bold cyan]predictions")
+
+    if backfill:
+        paths = Paths.resolve()
+        for source, folder in (("essay", "Essays"), ("debate", "Debate")):
+            for f in sorted((paths.digest_root / folder).glob("????-??-??.md")):
+                made_on = f.stem
+                text = f.read_text(encoding="utf-8")
+                # debates: judge only the synthesis (the house call), not the
+                # deliberately one-sided bull/bear sections — matches the live hook
+                if source == "debate" and "## ⚖️ Macro Strategist Synthesis" in text:
+                    text = text.split("## ⚖️ Macro Strategist Synthesis", 1)[1]
+                n = extract_predictions(source, made_on, text, made_on=made_on)
+                console.print(f"  [dim]{source} {made_on}: {n} new[/dim]")
+
+    counts = resolve_due_predictions()
+    console.print(
+        f"  [green]✓[/green] due={counts['due']} correct={counts['correct']} "
+        f"incorrect={counts['incorrect']} unclear={counts['unclear']} "
+        f"deferred={counts['deferred']}"
+    )
+    try:
+        paths = Paths.resolve()
+        paths.ensure()
+        n = write_scorecard(paths)
+        console.print(f"  [dim]→ Scorecard.md written ({n} predictions)[/dim]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [yellow]⚠[/yellow] scorecard write skipped: {exc}")
 
 
 @main.command()
