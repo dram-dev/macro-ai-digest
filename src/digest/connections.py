@@ -9,13 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
 from digest import db
-from digest.config import settings
+from digest.claude_cli import call_claude, parse_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -31,41 +29,9 @@ For each thread provide:
 Respond with ONLY valid JSON: {"threads": [...]}. Empty list is fine if no strong connections exist."""
 
 
-def _call_claude(prompt: str) -> str:
-    full = f"{SYSTEM_PROMPT}\n\n{prompt}"
-    cmd = ["claude", "-p", "--model", settings.summarizer_model, "--output-format", "json"]
-    result = subprocess.run(
-        cmd,
-        input=full,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"claude exit {result.returncode}: {result.stderr.strip()[:300]}"
-        )
-    try:
-        envelope = json.loads(result.stdout)
-        return envelope.get("result") or envelope.get("response") or result.stdout
-    except json.JSONDecodeError:
-        return result.stdout
-
-
 def _parse_threads(raw: str) -> list[dict[str, Any]]:
-    raw = raw.strip()
-    try:
-        return json.loads(raw).get("threads", [])
-    except (json.JSONDecodeError, AttributeError):
-        pass
-    m = re.search(r"(\{.*\})", raw, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(1)).get("threads", [])
-        except (json.JSONDecodeError, AttributeError):
-            pass
-    return []
+    threads = parse_json_object(raw).get("threads", [])
+    return threads if isinstance(threads, list) else []
 
 
 def run_connections(date_iso: str | None = None) -> list[dict[str, Any]]:
@@ -99,7 +65,7 @@ def run_connections(date_iso: str | None = None) -> list[dict[str, Any]]:
     )
 
     try:
-        raw = _call_claude(prompt)
+        raw = call_claude(SYSTEM_PROMPT, prompt, timeout=120)
     except Exception as exc:
         logger.error("connections: Claude call failed: %s", exc)
         return []

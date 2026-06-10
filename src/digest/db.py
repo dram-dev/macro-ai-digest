@@ -96,6 +96,27 @@ MIGRATIONS = [
         UNIQUE(event_type, event_date, title)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_events_date ON upcoming_events(event_date)",
+    # Wave 2: persistent storylines (multi-day narrative threading)
+    """CREATE TABLE IF NOT EXISTS storylines (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug        TEXT NOT NULL UNIQUE,
+        name        TEXT NOT NULL,
+        status      TEXT NOT NULL DEFAULT 'active',
+        state       TEXT NOT NULL,
+        resolution  TEXT,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        last_moved  TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS storyline_deltas (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        storyline_id INTEGER NOT NULL REFERENCES storylines(id),
+        date         TEXT NOT NULL,
+        delta        TEXT NOT NULL,
+        item_ids     TEXT,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(storyline_id, date)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_storyline_deltas_date ON storyline_deltas(date)",
 ]
 
 
@@ -982,3 +1003,112 @@ def mark_published(item_ids: list[int]) -> None:
     """
     with get_conn() as conn:
         conn.execute(sql, tuple(item_ids))
+
+
+# ── Storylines (Wave 2: multi-day narrative threading) ─────────────────
+
+
+def get_storylines(
+    statuses: tuple[str, ...] = ("active",), limit: int | None = None
+) -> list[sqlite3.Row]:
+    """Storylines in the given statuses, most recently moved first."""
+    placeholders = ",".join("?" for _ in statuses)
+    sql = f"""
+        SELECT id, slug, name, status, state, resolution, created_at, last_moved
+        FROM storylines
+        WHERE status IN ({placeholders})
+        ORDER BY last_moved DESC, id DESC
+    """
+    params: tuple = tuple(statuses)
+    if limit:
+        sql += " LIMIT ?"
+        params += (limit,)
+    with get_conn() as conn:
+        return conn.execute(sql, params).fetchall()
+
+
+def get_storyline(slug: str) -> sqlite3.Row | None:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT id, slug, name, status, state, resolution, created_at, last_moved "
+            "FROM storylines WHERE slug = ?",
+            (slug,),
+        ).fetchone()
+
+
+def create_storyline(slug: str, name: str, state: str, date_iso: str) -> int:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO storylines (slug, name, state, status, last_moved) "
+            "VALUES (?, ?, ?, 'active', ?)",
+            (slug, name, state, date_iso),
+        )
+        return cur.lastrowid
+
+
+def move_storyline(slug: str, state: str, date_iso: str) -> None:
+    """Update the running state and last_moved; movement reactivates dormant lines."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE storylines SET state = ?, last_moved = ?, status = 'active' "
+            "WHERE slug = ?",
+            (state, date_iso, slug),
+        )
+
+
+def resolve_storyline(slug: str, resolution: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE storylines SET status = 'resolved', resolution = ? WHERE slug = ?",
+            (resolution, slug),
+        )
+
+
+def mark_stale_storylines_dormant(days: int = 14) -> int:
+    """Active storylines that haven't moved in N days go dormant. Returns count."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE storylines SET status = 'dormant' "
+            "WHERE status = 'active' AND (last_moved IS NULL OR last_moved < date('now', ?))",
+            (f"-{days} days",),
+        )
+        return cur.rowcount or 0
+
+
+def upsert_storyline_delta(
+    storyline_id: int, date_iso: str, delta: str, item_ids: list[int]
+) -> None:
+    """One delta per storyline per date; re-runs on the same day replace it."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO storyline_deltas (storyline_id, date, delta, item_ids) "
+            "VALUES (?, ?, ?, ?)",
+            (storyline_id, date_iso, delta, json.dumps(item_ids)),
+        )
+
+
+def get_storyline_deltas(storyline_id: int, limit: int | None = None) -> list[sqlite3.Row]:
+    """Timeline for one storyline, newest first."""
+    sql = (
+        "SELECT date, delta, item_ids FROM storyline_deltas "
+        "WHERE storyline_id = ? ORDER BY date DESC"
+    )
+    params: tuple = (storyline_id,)
+    if limit:
+        sql += " LIMIT ?"
+        params += (limit,)
+    with get_conn() as conn:
+        return conn.execute(sql, params).fetchall()
+
+
+def storylines_moved_on(date_iso: str) -> list[sqlite3.Row]:
+    """Storylines with a delta on the given date (for the Brief), newest first."""
+    sql = """
+        SELECT s.slug, s.name, s.status, s.state, d.delta, d.item_ids
+        FROM storyline_deltas d
+        JOIN storylines s ON s.id = d.storyline_id
+        WHERE d.date = ?
+        ORDER BY d.id ASC
+    """
+    with get_conn() as conn:
+        return conn.execute(sql, (date_iso,)).fetchall()
