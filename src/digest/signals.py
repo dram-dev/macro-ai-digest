@@ -1,13 +1,15 @@
-"""Signal leaderboard — daily all-time ranked view of the digest's highest-signal items.
+"""Signal leaderboard — daily ranked view of the digest's highest-signal items.
 
 Writes three Obsidian markdown files under 80 Digest/Signal/:
   High.md    — signal_score ≥ 0.72
   Medium.md  — 0.40 ≤ signal_score < 0.72
   Low.md     — signal_score < 0.40 (still summarized/kept)
 
-Each file is a live leaderboard: fully rewritten on each run, always showing
-the top-100 all-time items per tier ranked by composite signal score.
-A "🆕 New — Last 24h" section highlights items ingested since yesterday.
+Each file is a live leaderboard: fully rewritten on each run, showing the
+top-100 items per tier from a rolling 90-day window (an all-time view just
+pins stale ⭐1.00 items to the top forever). A "🆕 New — Last 24h" section
+highlights items ingested since yesterday. Routine insider-sale drips (same
+insider/ticker/action ≥3×, similar size) collapse into one summary row.
 
 Score formula:
   signal_score = triage_score × confidence_weight × source_multiplier × regime_weight × sentiment_weight  (clamped 0–1)
@@ -49,6 +51,15 @@ QUANT_SOURCES = {"fred", "cboe", "cftc", "yahoo", "insider", "ftd"}
 
 HIGH_THRESH = 0.72
 MED_THRESH  = 0.40
+
+# Leaders section window — all-time froze early Clipped ⭐1.00 items on top
+LEADER_WINDOW_DAYS = 90
+
+# Insider drip collapsing: ≥3 same (ticker, insider, action) rows collapse to
+# one summary line; a trade >5× the group median stays its own row so true
+# anomalies (a $111M sale among $500k drips) never get buried.
+DRIP_MIN_TRADES = 3
+DRIP_OUTLIER_MULT = 5.0
 
 # Regime multiplier: amplify or dampen scores based on macro environment.
 # Applied on top of the base triage_score × confidence_weight × source_multiplier.
@@ -194,32 +205,17 @@ def _render_prose_callout(item: dict[str, Any], score: float, is_new: bool) -> s
 
 
 # ── Quantitative rendering ─────────────────────────────────────────────
+# (The mermaid xychart blocks that used to accompany these tables were
+# dropped: with 40+ truncated x-axis labels they were unreadable, and the
+# tables carry the same data.)
 
-def _z_hex(z: float | None) -> str:
-    """Hex color: red spectrum for positive z, blue for negative."""
-    if z is None:
-        return "#94A3B8"
-    abs_z = abs(z)
-    if z >= 0:
-        return "#B91C1C" if abs_z >= 2 else "#EF4444" if abs_z >= 1 else "#FCA5A5"
-    return "#1D4ED8" if abs_z >= 2 else "#3B82F6" if abs_z >= 1 else "#93C5FD"
-
-
-def _chart_block(labels: list[str], values: list[float], dataset_label: str) -> str:
-    """Render a Mermaid xychart-beta bar chart (native Obsidian 1.4+, no plugin)."""
-    max_abs = max((abs(v) for v in values), default=3.0)
-    y_max   = max(3.0, round(max_abs + 0.5, 1))
-    lbl     = "[" + ", ".join(f'"{lab}"' for lab in labels) + "]"
-    dat     = "[" + ", ".join(f"{v:.2f}" for v in values) + "]"
-    return (
-        "```mermaid\n"
-        "xychart-beta\n"
-        f'    title "{dataset_label}"\n'
-        f"    x-axis {lbl}\n"
-        f'    y-axis "z-score" -{y_max} --> {y_max}\n'
-        f"    bar {dat}\n"
-        "```"
-    )
+def _num(value: Any) -> float | None:
+    """Float value, or None for missing/NaN — keeps 'nan' out of the tables."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if f != f else f
 
 
 def _new_flag(is_new: bool) -> str:
@@ -246,26 +242,22 @@ def _render_fred(
         "| Date | Series | Latest | Δ | z-score | Out | Score |",
         "|------|--------|--------|---|---------|-----|-------|",
     ]
-    chart_labels, chart_vals = [], []
     for item, score, is_new in items:
-        m     = _parse_meta(item)
-        label = m.get("label") or m.get("series_id") or (item.get("title") or "")[:25]
-        val   = f"{m['latest_value']:.4f}" if m.get("latest_value") is not None else "—"
-        delta = f"{m['delta']:+.4f}"       if m.get("delta")        is not None else "—"
-        z     = m.get("z_score")
-        z_str = f"{z:+.2f}σ" if z is not None else "—"
+        m = _parse_meta(item)
+        z = _num(m.get("z_score"))
+        if z is None:
+            continue   # a z-anomaly row without a z is noise, not signal
+        label   = m.get("label") or m.get("series_id") or (item.get("title") or "")[:25]
+        latest  = _num(m.get("latest_value"))
+        delta_v = _num(m.get("delta"))
+        val   = f"{latest:.4f}"   if latest  is not None else "—"
+        delta = f"{delta_v:+.4f}" if delta_v is not None else "—"
         out   = _outcome_cell(item.get("id"), outcomes)
         rows.append(
             f"| {_new_flag(is_new)}{_date(item)} | {label} | {val} | {delta} "
-            f"| {z_str} | {out} | {score:.2f} |"
+            f"| {z:+.2f}σ | {out} | {score:.2f} |"
         )
-        if z is not None:
-            chart_labels.append(label[:20])
-            chart_vals.append(z)
-    parts = ["\n".join(rows)]
-    if chart_labels:
-        parts.append(_chart_block(chart_labels, chart_vals, "z-score (FRED)"))
-    return "\n\n".join(parts)
+    return "\n".join(rows)
 
 
 def _render_cboe(
@@ -275,24 +267,19 @@ def _render_cboe(
         "| Date | Symbol | Value | z-score | Out | Score |",
         "|------|--------|-------|---------|-----|-------|",
     ]
-    chart_labels, chart_vals = [], []
     for item, score, is_new in items:
-        m     = _parse_meta(item)
+        m = _parse_meta(item)
+        z = _num(m.get("z_score"))
+        if z is None:
+            continue
         label = m.get("symbol") or (item.get("title") or "")[:25]
-        val   = f"{m['value']:.2f}" if m.get("value") is not None else "—"
-        z     = m.get("z_score")
-        z_str = f"{z:+.2f}σ" if z is not None else "—"
+        value = _num(m.get("value"))
+        val   = f"{value:.2f}" if value is not None else "—"
         out   = _outcome_cell(item.get("id"), outcomes)
         rows.append(
-            f"| {_new_flag(is_new)}{_date(item)} | {label} | {val} | {z_str} | {out} | {score:.2f} |"
+            f"| {_new_flag(is_new)}{_date(item)} | {label} | {val} | {z:+.2f}σ | {out} | {score:.2f} |"
         )
-        if z is not None:
-            chart_labels.append(label[:20])
-            chart_vals.append(z)
-    parts = ["\n".join(rows)]
-    if chart_labels:
-        parts.append(_chart_block(chart_labels, chart_vals, "z-score (CBOE)"))
-    return "\n\n".join(parts)
+    return "\n".join(rows)
 
 
 def _render_cftc(
@@ -302,26 +289,22 @@ def _render_cftc(
         "| Date | Contract | Net Position | Wk Chg | z-score | Out | Score |",
         "|------|----------|-------------|--------|---------|-----|-------|",
     ]
-    chart_labels, chart_vals = [], []
     for item, score, is_new in items:
-        m       = _parse_meta(item)
+        m = _parse_meta(item)
+        z = _num(m.get("z_score"))
+        if z is None:
+            continue
         label   = m.get("contract") or (item.get("title") or "")[:25]
-        net_pos = f"{int(m['net_position']):,}" if m.get("net_position") is not None else "—"
-        wk_chg  = f"{int(m['weekly_change']):+,}" if m.get("weekly_change") is not None else "—"
-        z       = m.get("z_score")
-        z_str   = f"{z:+.2f}σ" if z is not None else "—"
+        net     = _num(m.get("net_position"))
+        wk      = _num(m.get("weekly_change"))
+        net_pos = f"{int(net):,}" if net is not None else "—"
+        wk_chg  = f"{int(wk):+,}" if wk  is not None else "—"
         out     = _outcome_cell(item.get("id"), outcomes)
         rows.append(
             f"| {_new_flag(is_new)}{_date(item)} | {label} | {net_pos} | {wk_chg} "
-            f"| {z_str} | {out} | {score:.2f} |"
+            f"| {z:+.2f}σ | {out} | {score:.2f} |"
         )
-        if z is not None:
-            chart_labels.append(label[:20])
-            chart_vals.append(z)
-    parts = ["\n".join(rows)]
-    if chart_labels:
-        parts.append(_chart_block(chart_labels, chart_vals, "z-score (CFTC)"))
-    return "\n\n".join(parts)
+    return "\n".join(rows)
 
 
 def _render_yahoo(
@@ -332,34 +315,89 @@ def _render_yahoo(
         "|------|--------|-------|----------|--------|-------|",
     ]
     for item, score, is_new in items:
-        m      = _parse_meta(item)
-        ticker = m.get("ticker") or (item.get("title") or "")[:15]
-        price  = f"${m['price']:.2f}"       if m.get("price")      is not None else "—"
-        pct    = f"{m['pct_change']:+.2f}%" if m.get("pct_change") is not None else "—"
-        rsi    = f"{m['rsi14']:.1f}"        if m.get("rsi14")      is not None else "—"
+        m       = _parse_meta(item)
+        ticker  = m.get("ticker") or (item.get("title") or "")[:15]
+        price_v = _num(m.get("price"))
+        pct_v   = _num(m.get("pct_change"))
+        rsi_v   = _num(m.get("rsi14"))
+        if price_v is None and pct_v is None:
+            continue   # "$nan / nan%" rows carry nothing
+        price = f"${price_v:.2f}"  if price_v is not None else "—"
+        pct   = f"{pct_v:+.2f}%"   if pct_v   is not None else "—"
+        rsi   = f"{rsi_v:.1f}"     if rsi_v   is not None else "—"
         rows.append(
             f"| {_new_flag(is_new)}{_date(item)} | {ticker} | {price} | {pct} | {rsi} | {score:.2f} |"
         )
     return "\n".join(rows)
 
 
+def _insider_row(
+    date_str: str, is_new: bool, ticker: str, name: str, role: str,
+    action: str, value: float | None, score: float, count: int = 1,
+) -> str:
+    if count > 1:
+        action = f"{action} ×{count} — routine drip"
+        val = f"${value:,.0f} total" if value is not None else "—"
+    else:
+        val = f"${value:,.0f}" if value is not None else "—"
+    return (
+        f"| {_new_flag(is_new)}{date_str} | {ticker} | {name[:20]} | {role[:20]} "
+        f"| {action} | {val} | {score:.2f} |"
+    )
+
+
 def _render_insider(
     items: list[tuple[dict, float, bool]], outcomes: dict | None = None
 ) -> str:
+    """Insider table with routine-drip collapsing.
+
+    ≥DRIP_MIN_TRADES rows by the same (ticker, insider, action) collapse to a
+    single date-ranged total — programmatic 10b5-1 selling is one fact, not
+    twelve rows. Any trade >DRIP_OUTLIER_MULT× the group median keeps its own
+    row so genuinely outsized sales never disappear into a drip line.
+    """
     rows = [
         "| Date | Ticker | Insider | Role | Action | Value | Score |",
         "|------|--------|---------|------|--------|-------|-------|",
     ]
+    groups: dict[tuple, list] = {}
     for item, score, is_new in items:
-        m      = _parse_meta(item)
-        ticker = m.get("ticker") or "?"
-        name   = (m.get("owner") or "?")[:20]
-        role   = (m.get("role") or "?")[:20]
-        action = m.get("action") or "?"
-        val    = f"${m['value_usd']:,.0f}" if m.get("value_usd") is not None else "—"
-        rows.append(
-            f"| {_new_flag(is_new)}{_date(item)} | {ticker} | {name} | {role} | {action} | {val} | {score:.2f} |"
+        m   = _parse_meta(item)
+        key = (m.get("ticker") or "?", m.get("owner") or "?", m.get("action") or "?")
+        groups.setdefault(key, []).append((item, score, is_new, m))
+
+    for (ticker, name, action), entries in groups.items():
+        values = sorted(
+            v for v in (_num(e[3].get("value_usd")) for e in entries) if v is not None
         )
+        median = values[len(values) // 2] if values else None
+
+        outliers, routine = [], []
+        for e in entries:
+            v = _num(e[3].get("value_usd"))
+            big = median is not None and v is not None and v > DRIP_OUTLIER_MULT * median
+            (outliers if big else routine).append(e)
+
+        for item, score, is_new, m in outliers:
+            rows.append(_insider_row(
+                _date(item), is_new, ticker, name, m.get("role") or "?", action,
+                _num(m.get("value_usd")), score,
+            ))
+
+        if len(routine) >= DRIP_MIN_TRADES:
+            dates = sorted(_date(e[0]) for e in routine)
+            total = sum(v for v in (_num(e[3].get("value_usd")) for e in routine) if v is not None)
+            rows.append(_insider_row(
+                f"{dates[0]} → {dates[-1]}", any(e[2] for e in routine), ticker,
+                name, routine[0][3].get("role") or "?", action,
+                total if values else None, max(e[1] for e in routine), count=len(routine),
+            ))
+        else:
+            for item, score, is_new, m in routine:
+                rows.append(_insider_row(
+                    _date(item), is_new, ticker, name, m.get("role") or "?", action,
+                    _num(m.get("value_usd")), score,
+                ))
     return "\n".join(rows)
 
 
@@ -448,6 +486,7 @@ def _render_tier_file(
     outcomes: dict | None = None,
 ) -> str:
     cutoff_24h = now - timedelta(hours=24)
+    cutoff_win = now - timedelta(days=LEADER_WINDOW_DAYS)
 
     tier_items = sorted(
         [(item, score) for item, score in all_scored if tier_for_score(score) == tier],
@@ -461,13 +500,19 @@ def _render_tier_file(
     ]
     new_ids = {item.get("id") for item, _ in new_items}
 
+    # Leaders come from a rolling window — an all-time list froze early
+    # ⭐1.00 items (e.g. Clipped articles) at the top permanently.
+    window_items = [
+        (item, score) for item, score in tier_items
+        if _parse_dt(item.get("ingested_at")) >= cutoff_win
+    ]
     historical = [
-        (item, score) for item, score in tier_items[:top_n]
+        (item, score) for item, score in window_items[:top_n]
         if item.get("id") not in new_ids
     ]
 
     total = len(tier_items)
-    shown = min(top_n, total - len(new_items))
+    shown = min(top_n, max(0, len(window_items) - len(new_items)))
     emoji = TIER_EMOJI[tier]
     label = TIER_LABEL[tier]
     desc  = TIER_DESC[tier]
@@ -502,6 +547,7 @@ def _render_tier_file(
         f"updated: {now.strftime('%Y-%m-%dT%H:%M:%S')}\n"
         f"tier: {tier}\n"
         f"total_qualifying: {total}\n"
+        f"window_qualifying: {len(window_items)}\n"
         f"new_24h: {len(new_items)}\n"
         f"---"
     )
@@ -510,15 +556,18 @@ def _render_tier_file(
         f"> [!abstract] {emoji} {label} Signal — updated {now_utc}\n"
         f"> **Score** = `triage_score × confidence_weight × source_multiplier × regime_weight × sentiment_weight`\n"
         f"> {desc}\n"
-        f"> Showing **{len(new_items)} new** + top **{shown}** all-time of {total} qualifying signals"
+        f"> Showing **{len(new_items)} new** + top **{shown}** from the last "
+        f"{LEADER_WINDOW_DAYS} days ({len(window_items)} in window, {total} all-time)"
     )
 
-    new_section     = _build_section("🆕 New — Last 24h", new_items, new_ids, outcomes)
-    alltime_section = _build_section("📋 All-Time Leaders", historical, set(), outcomes)
+    new_section    = _build_section("🆕 New — Last 24h", new_items, new_ids, outcomes)
+    window_section = _build_section(
+        f"📋 Leaders — Rolling {LEADER_WINDOW_DAYS} Days", historical, set(), outcomes
+    )
 
     sections = [
         frontmatter,
-        f"# {emoji} {label} Signal — All-Time Leaderboard",
+        f"# {emoji} {label} Signal — Leaderboard",
         header_callout,
     ]
     if track_record_callout:
@@ -527,7 +576,7 @@ def _render_tier_file(
         "---",
         new_section,
         "---",
-        alltime_section,
+        window_section,
     ]
 
     return "\n\n".join(sections) + "\n"

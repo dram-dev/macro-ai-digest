@@ -19,6 +19,51 @@ logger = logging.getLogger(__name__)
 
 _MIN_CLUSTER_TOTAL = 3
 
+_NAMING_SYSTEM_PROMPT = """You name narrative clusters for a macro/AI digest. Each cluster is identified by its raw top TF-IDF terms (e.g. "macd, rsi, 50 day") plus a few example item titles.
+
+Give each cluster a short human display name: 2-5 words, Title Case, specific to what the items are actually about (e.g. "Semi Technical Breakdown", "FRED Rate Prints", "Insider Selling Wave"). Name the substance, not the file format.
+
+Respond with ONLY valid JSON mapping the EXACT raw cluster id to its name:
+{"names": {"macd, rsi, 50 day": "Semi Technical Breakdown"}}"""
+
+
+def _ensure_cluster_names(
+    clusters: list[dict], start_iso: str, end_iso: str
+) -> dict[str, str]:
+    """Display names for cluster ids, naming new ones via one Claude call.
+
+    Names are cached in the cluster_names table so each raw TF-IDF id is
+    named once, ever. Falls back to raw ids on any failure.
+    """
+    cached = db.get_cluster_names()
+    missing = [c["cluster_id"] for c in clusters if c["cluster_id"] not in cached]
+    if not missing:
+        return cached
+
+    blocks = []
+    for cid in missing:
+        examples = db.top_items_for_cluster(cid, start_iso, end_iso, limit=3)
+        titles = "; ".join((r["title"] or "?")[:80] for r in examples) or "(no examples)"
+        blocks.append(f'- id: "{cid}"\n  examples: {titles}')
+    prompt = f"Clusters to name ({len(missing)}):\n\n" + "\n".join(blocks)
+
+    try:
+        from digest.claude_cli import call_claude, parse_json_object
+        raw = call_claude(_NAMING_SYSTEM_PROMPT, prompt, timeout=120)
+        names = parse_json_object(raw).get("names") or {}
+        valid = {
+            cid: str(name).strip()[:50]
+            for cid, name in names.items()
+            if cid in missing and str(name).strip()
+        }
+        if valid:
+            db.upsert_cluster_names(valid)
+            cached.update(valid)
+            logger.info("velocity: named %d new clusters", len(valid))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("velocity: cluster naming failed (%s) — using raw ids", exc)
+    return cached
+
 
 def _week_range(ref: date) -> tuple[str, str]:
     monday = ref - timedelta(days=ref.weekday())
@@ -109,6 +154,12 @@ def write_velocity_note() -> dict:
         if this_week_empty and clusters else ""
     )
 
+    names = _ensure_cluster_names(clusters, last_mon, _week_range(today)[1])
+
+    def _label(c: dict) -> str:
+        name = names.get(c["cluster_id"])
+        return f"**{name}**" if name else f"`{c['cluster_id']}`"
+
     lines = [
         "---",
         f"updated: {today.isoformat()}",
@@ -119,7 +170,7 @@ def write_velocity_note() -> dict:
         "",
         "# 📈 Narrative Velocity",
         f"> Week-over-week cluster momentum — as of {today.isoformat()}",
-        f"> Cluster labels = top TF-IDF terms. NEW = first appearance this week.{stale_note}",
+        f"> NEW = first appearance this week.{stale_note}",
         "",
         "| Cluster | This Wk | Last Wk | WoW | Trend |",
         "|---------|---------|---------|-----|-------|",
@@ -130,7 +181,7 @@ def write_velocity_note() -> dict:
 
     for c in (finite + new)[:30]:
         lines.append(
-            f"| `{c['cluster_id']}` | {c['this_week']} | {c['last_week']}"
+            f"| {_label(c)} | {c['this_week']} | {c['last_week']}"
             f" | {_wow_str(c)} | {_arrow(c)} |"
         )
 
@@ -155,7 +206,7 @@ def write_velocity_note() -> dict:
     lines += ["", "## 🆕 Emerging This Week", ""]
     if new_clusters:
         for c in new_clusters[:10]:
-            lines.append(f"- **`{c['cluster_id']}`** — {c['this_week']} items (first appearance)")
+            lines.append(f"- {_label(c)} — {c['this_week']} items (first appearance)")
             lines.extend(_cluster_examples(c["cluster_id"], this_mon, _week_range(today)[1]))
     else:
         lines.append("*No new clusters this week.*")
@@ -163,7 +214,7 @@ def write_velocity_note() -> dict:
     lines += ["", "## 🔥 Accelerating", ""]
     if hot:
         for c in sorted(hot, key=lambda x: x["velocity"], reverse=True)[:10]:
-            lines.append(f"- **`{c['cluster_id']}`** — {c['this_week']} this wk vs {c['last_week']} last ({_wow_str(c)} WoW)")
+            lines.append(f"- {_label(c)} — {c['this_week']} this wk vs {c['last_week']} last ({_wow_str(c)} WoW)")
             lines.extend(_cluster_examples(c["cluster_id"], this_mon, _week_range(today)[1]))
     else:
         lines.append("*No strongly accelerating clusters this week.*")
@@ -171,10 +222,10 @@ def write_velocity_note() -> dict:
     lines += ["", "## 📉 Fading", ""]
     if cold or gone_clusters:
         for c in sorted(cold, key=lambda x: x["velocity"])[:10]:
-            lines.append(f"- **`{c['cluster_id']}`** — {c['this_week']} this wk vs {c['last_week']} last ({_wow_str(c)} WoW)")
+            lines.append(f"- {_label(c)} — {c['this_week']} this wk vs {c['last_week']} last ({_wow_str(c)} WoW)")
             lines.extend(_cluster_examples(c["cluster_id"], this_mon, _week_range(today)[1]))
         for c in gone_clusters[:5]:
-            lines.append(f"- **`{c['cluster_id']}`** — gone ({c['last_week']} items last week, 0 this week)")
+            lines.append(f"- {_label(c)} — gone ({c['last_week']} items last week, 0 this week)")
             lines.extend(_cluster_examples(c["cluster_id"], last_mon, _week_range(today - timedelta(weeks=1))[1]))
     else:
         lines.append("*No strongly fading clusters this week.*")

@@ -53,7 +53,7 @@ def _query_signals(date_iso: str) -> list[dict]:
         try:
             m = json.loads(row["metadata_json"] or "{}")
             z = m.get("z_score")
-            if z is None:
+            if z is None or z != z:   # missing or NaN
                 continue
             label = (
                 m.get("series_id") or m.get("contract") or m.get("series") or row["source"]
@@ -75,18 +75,22 @@ def _query_yahoo(date_iso: str) -> list[dict]:
     """
     with db.get_conn() as conn:
         rows = conn.execute(sql, (date_iso,)).fetchall()
-    out = []
+    by_ticker: dict[str, dict] = {}
     for row in rows:
         try:
             m = json.loads(row["metadata_json"] or "{}")
             pct = m.get("pct_change") or m.get("pct_change_1d")
             ticker = m.get("ticker")
-            if pct is None or not ticker:
+            if pct is None or pct != pct or not ticker:   # missing or NaN
                 continue
-            out.append({"label": ticker, "pct": round(pct, 2), "rsi": m.get("rsi14")})
+            entry = {"label": ticker, "pct": round(pct, 2), "rsi": m.get("rsi14")}
+            # multiple readings per ticker per day → keep the largest move
+            prev = by_ticker.get(ticker)
+            if prev is None or abs(entry["pct"]) > abs(prev["pct"]):
+                by_ticker[ticker] = entry
         except Exception:
             continue
-    return sorted(out, key=lambda x: abs(x["pct"]), reverse=True)[:10]
+    return sorted(by_ticker.values(), key=lambda x: abs(x["pct"]), reverse=True)[:10]
 
 
 def _query_cftc(date_iso: str) -> list[dict]:
@@ -140,6 +144,21 @@ def _chart_block(
     return f"```chart\n{inner}```"
 
 
+def _signed_series(
+    values: list[float], pos_title: str, neg_title: str
+) -> list[dict]:
+    """Split values into pos/neg series, omitting a side that is all zeros
+    (an all-zero 'Gained' bar set on a red day is pure noise)."""
+    pos = [v if v > 0 else 0 for v in values]
+    neg = [v if v < 0 else 0 for v in values]
+    series = []
+    if any(v != 0 for v in pos):
+        series.append({"title": pos_title, "data": pos})
+    if any(v != 0 for v in neg):
+        series.append({"title": neg_title, "data": neg})
+    return series
+
+
 def build_obsidian_charts(date_iso: str) -> str:
     """Return markdown containing all Obsidian Charts blocks for the day.
 
@@ -151,40 +170,26 @@ def build_obsidian_charts(date_iso: str) -> str:
 
     signals = _query_signals(date_iso)
     if signals:
-        labels = [s["label"] for s in signals]
-        zs = [s["z"] for s in signals]
-        # Split into two series so the plugin can color them differently
-        pos_data = [v if v >= 0 else 0 for v in zs]
-        neg_data = [v if v < 0 else 0 for v in zs]
-        series = [{"title": "Above baseline", "data": pos_data}]
-        if any(v != 0 for v in neg_data):
-            series.append({"title": "Below baseline", "data": neg_data})
-        parts.append("**Signal Strength** — z-score vs trailing baseline")
-        parts.append(_chart_block("bar", labels, series))
+        series = _signed_series(
+            [s["z"] for s in signals], "Above baseline", "Below baseline"
+        )
+        if series:
+            parts.append("**Signal Strength** — z-score vs trailing baseline")
+            parts.append(_chart_block("bar", [s["label"] for s in signals], series))
 
     yahoo = _query_yahoo(date_iso)
     if yahoo:
-        labels = [y["label"] for y in yahoo]
-        pcts = [y["pct"] for y in yahoo]
-        pos_data = [v if v >= 0 else 0 for v in pcts]
-        neg_data = [v if v < 0 else 0 for v in pcts]
-        series = [{"title": "Gained", "data": pos_data}]
-        if any(v != 0 for v in neg_data):
-            series.append({"title": "Declined", "data": neg_data})
-        parts.append("**Watchlist Daily Moves** — % change")
-        parts.append(_chart_block("bar", labels, series))
+        series = _signed_series([y["pct"] for y in yahoo], "Gained", "Declined")
+        if series:
+            parts.append("**Watchlist Daily Moves** — % change")
+            parts.append(_chart_block("bar", [y["label"] for y in yahoo], series))
 
     cftc = _query_cftc(date_iso)
     if cftc:
-        labels = [c["label"] for c in cftc]
-        nets = [c["net_k"] for c in cftc]
-        pos_data = [v if v >= 0 else 0 for v in nets]
-        neg_data = [v if v < 0 else 0 for v in nets]
-        series = [{"title": "Net long", "data": pos_data}]
-        if any(v != 0 for v in neg_data):
-            series.append({"title": "Net short", "data": neg_data})
-        parts.append("**CFTC Positioning** — k contracts net long/short")
-        parts.append(_chart_block("bar", labels, series))
+        series = _signed_series([c["net_k"] for c in cftc], "Net long", "Net short")
+        if series:
+            parts.append("**CFTC Positioning** — k contracts net long/short")
+            parts.append(_chart_block("bar", [c["label"] for c in cftc], series))
 
     return "\n\n".join(parts)
 
