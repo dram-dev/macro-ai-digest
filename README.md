@@ -40,12 +40,14 @@ dashboard / backtest`
 - Macro regime detector — risk-on / risk-off / transition; multiplier feeds
   the leaderboard
 - Signal leaderboard — multi-factor scoring with topic / source priority,
-  recency, LLM materiality
+  recency, LLM materiality; rolling 90-day leaders window, routine insider
+  10b5-1 drips collapsed into single summary rows
 - Sentiment classifier (MLX-local financial sentiment model)
 - Entity extraction + ticker linkage — items get attached to tickers in the
   stock tracker
 - Outcomes tracking — post-hoc validation of past signal calls
-- Cluster + narrative velocity — week-over-week momentum across clusters
+- Cluster + narrative velocity — week-over-week momentum across clusters,
+  with cached Claude-assigned display names instead of raw TF-IDF labels
 - Storyline threading — persistent multi-day narratives (Claude-maintained
   running state + daily deltas); movers surface in the Brief, weekly themes
   are seeded from active storylines
@@ -59,7 +61,9 @@ dashboard / backtest`
   scoreboard, upcoming events
 - `Daily/YYYY-MM-DD.md` — full daily note with regime callout, top signals,
   per-topic summaries (long-tail items carry plain `#id` refs to stay light)
-- `Topics/<Topic>.md` — per-topic archive, idempotent upsert by item ID
+- `Topics/<Topic>.md` — per-topic archive, idempotent upsert by item ID, with
+  a weekly Claude-maintained "State of play" brief on top (standing thesis,
+  what changed, what to watch)
 - `Storylines/<Name>.md` — one page per tracked narrative (current state +
   newest-first timeline), plus a status-grouped index
 - `Weekly/<YYYY-WW>.md` — themes, must-reads, contrarian signal, weekly essay;
@@ -127,9 +131,9 @@ uv run digest stats
 
 CLI commands: `ingest`, `sources`, `triage`, `summarize`, `pipeline`, `publish`,
 `weekly`, `regime`, `ensemble`, `outcomes`, `cluster`, `storylines`,
-`predictions`, `signals`, `essay`, `debate`, `dashboard`, `sentiment`,
-`entities`, `stocks`, `calendar`, `velocity`, `backtest`, `recent`, `stats`,
-`health`, `security`, `init-db`.
+`predictions`, `topic-state`, `signals`, `essay`, `debate`, `dashboard`,
+`sentiment`, `entities`, `stocks`, `calendar`, `velocity`, `backtest`,
+`recent`, `stats`, `health`, `security`, `init-db`.
 
 ## Gmail first-run OAuth
 

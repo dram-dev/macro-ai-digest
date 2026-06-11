@@ -135,6 +135,20 @@ MIGRATIONS = [
         UNIQUE(source, source_ref, claim)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_predictions_status ON predictions(status, due_on)",
+    # Wave 4: weekly topic state-of-play + LLM cluster names
+    """CREATE TABLE IF NOT EXISTS topic_state (
+        topic       TEXT PRIMARY KEY,
+        state       TEXT NOT NULL,
+        changed     TEXT,
+        watch       TEXT,
+        week        TEXT,
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
+    """CREATE TABLE IF NOT EXISTS cluster_names (
+        cluster_id  TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
 ]
 
 
@@ -1130,6 +1144,49 @@ def storylines_moved_on(date_iso: str) -> list[sqlite3.Row]:
     """
     with get_conn() as conn:
         return conn.execute(sql, (date_iso,)).fetchall()
+
+
+# ── Topic state-of-play + cluster names (Wave 4) ───────────────────────
+
+
+def upsert_topic_state(
+    topic: str, state: str, changed: str, watch: str, week: str
+) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO topic_state (topic, state, changed, watch, week, updated_at)
+               VALUES (?, ?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(topic) DO UPDATE SET
+                   state = excluded.state, changed = excluded.changed,
+                   watch = excluded.watch, week = excluded.week,
+                   updated_at = excluded.updated_at""",
+            (topic, state, changed, watch, week),
+        )
+
+
+def get_topic_state(topic: str) -> sqlite3.Row | None:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT topic, state, changed, watch, week, updated_at "
+            "FROM topic_state WHERE topic = ?",
+            (topic,),
+        ).fetchone()
+
+
+def get_cluster_names() -> dict[str, str]:
+    """All cached cluster display names keyed by raw TF-IDF cluster_id."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT cluster_id, name FROM cluster_names").fetchall()
+    return {row["cluster_id"]: row["name"] for row in rows}
+
+
+def upsert_cluster_names(mapping: dict[str, str]) -> None:
+    with get_conn() as conn:
+        for cluster_id, name in mapping.items():
+            conn.execute(
+                "INSERT OR REPLACE INTO cluster_names (cluster_id, name) VALUES (?, ?)",
+                (cluster_id, name),
+            )
 
 
 # ── Predictions (Wave 3: scorecard for essay/debate/weekly calls) ──────

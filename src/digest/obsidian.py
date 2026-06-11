@@ -510,6 +510,24 @@ def _render_archive_doc(
     lines: list[str] = ["---", yaml.safe_dump(front, sort_keys=False).strip(), "---", ""]
     lines.append(f"# {emoji} {title}")
     lines.append("")
+
+    # State-of-play brief — main archive only (rollover files are frozen)
+    if stamp_updated:
+        try:
+            sop = db.get_topic_state(topic_slug)
+        except Exception:
+            sop = None
+        if sop:
+            lines.append(f"> [!abstract] 🧭 State of play *(as of {sop['week']})*")
+            lines.append(f"> {sop['state']}")
+            if sop["changed"]:
+                lines.append(">")
+                lines.append(f"> **This week**: {sop['changed']}")
+            if sop["watch"]:
+                lines.append(">")
+                lines.append(f"> **Watching**: {sop['watch']}")
+            lines.append("")
+
     lines.append(note_line)
     lines.append("")
     lines.append("## Entries")
@@ -1098,6 +1116,17 @@ def publish_weekly(date_iso: str | None = None) -> dict:
             extract_predictions("weekly", week_iso, contrarian, made_on=date_iso)
         except Exception as exc:  # noqa: BLE001
             logger.warning("weekly: prediction extraction failed: %s", exc)
+
+    # Topic state-of-play refresh + archive rewrite so headers go live now
+    try:
+        from digest.topic_state import run_topic_states
+        n_states = run_topic_states(date_iso)
+        if n_states:
+            for slug in db.topics_with_summaries():
+                write_topic_archive(slug, paths)
+            logger.info("weekly: refreshed %d topic state briefs", n_states)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("weekly: topic state refresh failed: %s", exc)
 
     append_run_log(
         paths,

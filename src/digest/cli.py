@@ -455,6 +455,24 @@ def storylines(date_iso: str | None) -> None:
         console.print(f"  [yellow]⚠[/yellow] page write skipped: {exc}")
 
 
+@main.command("topic-state")
+def topic_state_cmd() -> None:
+    """Refresh the per-topic state-of-play briefs and rewrite topic archives."""
+    from digest.obsidian import Paths, write_topic_archive
+    from digest.topic_state import run_topic_states
+
+    db.init_db()
+    console.rule("[bold cyan]topic-state")
+    n = run_topic_states()
+    console.print(f"  [green]✓[/green] {n} topic briefs updated")
+    if n:
+        paths = Paths.resolve()
+        paths.ensure()
+        for slug in db.topics_with_summaries():
+            write_topic_archive(slug, paths)
+        console.print("  [dim]→ topic archives rewritten with new headers[/dim]")
+
+
 @main.command()
 @click.option(
     "--backfill",

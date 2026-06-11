@@ -108,6 +108,27 @@ def _signal_digest(rows: list) -> str:
     return "\n".join(lines) or "(no signals)"
 
 
+def _signal_index(rows: list) -> list[str]:
+    """Numbered, linked index matching _signal_digest's enumeration — the
+    agents cite "(Signal 7)", so the note must resolve those references."""
+    lines = [
+        "## 📑 Signal Index",
+        "",
+        '_The cases above cite "Signal N" — the numbered signals they debated:_',
+        "",
+    ]
+    for i, row in enumerate(rows[:20], 1):
+        title = (
+            (row["title"] or "?").replace("\n", " ")
+            .replace("[", "(").replace("]", ")")[:100]
+        )
+        link  = f"[{title}]({row['url']})" if row["url"] else title
+        topic = row["topic"] or "other"
+        score = float(row["triage_score"] or 0)
+        lines.append(f"{i}. {link} · `{topic}` · ⭐ {score:.2f} · `#{row['id']}`")
+    return lines
+
+
 def _build_stats(rows: list) -> str:
     """Return a brief statistics block: sentiment split + top entities."""
     sent_counts: Counter = Counter()
@@ -206,6 +227,10 @@ def generate_debate(ref_date: date | None = None) -> dict:
         "## ⚖️ Macro Strategist Synthesis",
         "",
         synthesis,
+        "",
+        "---",
+        "",
+        *_signal_index(rows),
         "",
         "---",
         "",
