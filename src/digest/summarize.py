@@ -1,13 +1,14 @@
 """Phase 2 — Summarize. Backend-abstracted, with a kill-switch.
 
 Backends share a common interface: take an item dict, return a SummaryOutput.
-Default backend is mlx_local (Qwen3.5-27B on the shared MLX server) — it won
+Default backend is mlx_local (Qwen3.6-27B on the shared MLX server, aligned
+with PC Digest 2026-06-12 so the per-request model swap can't OOM it) — it won
 the May 2026 trial vs claude_cli_pro on success rate (92% vs 55%; Pro rate
 limits collided with interactive use). Flip SUMMARIZER_BACKEND in .env to
 switch — no code change.
 
 Backends:
-  - mlx_local:         MLX-LM server, Qwen3.5-27B. $0, fully local. Default.
+  - mlx_local:         MLX-LM server, Qwen3.6-27B. $0, fully local. Default.
   - claude_cli_pro:    invokes `claude -p` headless on Sonnet. $0 (subscription),
                        but fails when Pro rate limits are exhausted.
   - haiku_api:         direct Anthropic API, Haiku 4.5 + caching. ~$0.50-1/mo.
@@ -243,8 +244,9 @@ def run_summarize(
             logger.error(
                 "summarize: MLX server health-check failed (%s) — "
                 "server may have crashed, skipping batch. "
-                "Restart with: mlx_lm.server --model mlx-community/Qwen3.5-27B-4bit --port 8080",
+                "Restart with: mlx_lm.server --model %s --port 8080",
                 exc,
+                settings.mlx_model,
             )
             return {"ready": len(rows), "succeeded": 0, "failed": 0}
 

@@ -15,7 +15,7 @@ Full architecture lives in `Plan.md` in the Obsidian vault at
 ## Status — all phases shipped
 
 **Pipeline:** `ingest → triage (Ollama Qwen2.5:14b) → summarize (MLX
-Qwen3.5-27B local) → score → publish (Obsidian) → signals / essay / debate /
+Qwen3.6-27B local) → score → publish (Obsidian) → signals / essay / debate /
 dashboard / backtest`
 
 **Ingestors (live):**
