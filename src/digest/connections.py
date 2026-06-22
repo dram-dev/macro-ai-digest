@@ -12,10 +12,18 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from pydantic import BaseModel, ValidationError, field_validator
+
 from digest import db
 from digest.claude_cli import call_claude, parse_json_object
 
 logger = logging.getLogger(__name__)
+
+# Validation bounds for an LLM-proposed connection thread.
+_THEME_MAX_CHARS = 120
+_INSIGHT_MIN_CHARS = 20
+_INSIGHT_MAX_CHARS = 1000
+_MIN_ITEMS = 2
 
 SYSTEM_PROMPT = """You are a pattern-recognition analyst reviewing today's AI/finance/technology news items. The reader is a senior data/AI leader in financial services with interests in: Fed policy & markets, China macro/geopolitics, AI thinkers, AI capex by hyperscalers, AI business applications, AI semiconductors.
 
@@ -29,9 +37,80 @@ For each thread provide:
 Respond with ONLY valid JSON: {"threads": [...]}. Empty list is fine if no strong connections exist."""
 
 
-def _parse_threads(raw: str) -> list[dict[str, Any]]:
+class ConnectionThread(BaseModel):
+    """Schema for one LLM-proposed connection thread.
+
+    Structural validation only. Referential integrity — item_ids must point at
+    real items in the day's bundle — is enforced separately in
+    `_validate_threads`, which holds the valid-id set. Bad threads are dropped,
+    never raised: connections are best-effort.
+    """
+
+    theme: str
+    item_ids: list[int]
+    insight: str
+
+    @field_validator("theme")
+    @classmethod
+    def _theme_nonempty(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("empty theme")
+        return v[:_THEME_MAX_CHARS]
+
+    @field_validator("insight")
+    @classmethod
+    def _insight_substantive(cls, v: str) -> str:
+        v = (v or "").strip()
+        if len(v) < _INSIGHT_MIN_CHARS:
+            raise ValueError(f"insight shorter than {_INSIGHT_MIN_CHARS} chars")
+        return v[:_INSIGHT_MAX_CHARS]
+
+    @field_validator("item_ids")
+    @classmethod
+    def _ids_min_unique(cls, v: list[int]) -> list[int]:
+        unique: list[int] = []
+        for i in v:
+            if i not in unique:
+                unique.append(i)
+        if len(unique) < _MIN_ITEMS:
+            raise ValueError(f"fewer than {_MIN_ITEMS} unique item_ids")
+        return unique
+
+
+def _parse_threads(raw: str) -> list[Any]:
+    """Pull the raw `threads` list out of the model's JSON (no validation yet)."""
     threads = parse_json_object(raw).get("threads", [])
     return threads if isinstance(threads, list) else []
+
+
+def _validate_threads(raw_threads: list[Any], valid_ids: set[int]) -> list[dict[str, Any]]:
+    """Drop malformed / ungrounded threads, returning normalized dicts.
+
+    A thread is kept only if it parses against `ConnectionThread` AND at least
+    `_MIN_ITEMS` of its item_ids reference real items in today's bundle. Every
+    drop is logged with its reason.
+    """
+    clean: list[dict[str, Any]] = []
+    for raw in raw_threads:
+        if not isinstance(raw, dict):
+            logger.info("connections: dropping non-object thread: %r", raw)
+            continue
+        try:
+            thread = ConnectionThread.model_validate(raw)
+        except ValidationError as exc:
+            reason = exc.errors()[0].get("msg", "invalid") if exc.errors() else "invalid"
+            logger.info("connections: dropping malformed thread (%s): %r", reason, raw)
+            continue
+        grounded = [i for i in thread.item_ids if i in valid_ids]
+        if len(grounded) < _MIN_ITEMS:
+            logger.info(
+                "connections: dropping thread '%s' — only %d of its item_ids match "
+                "today's items (need %d)", thread.theme, len(grounded), _MIN_ITEMS,
+            )
+            continue
+        clean.append({"theme": thread.theme, "item_ids": grounded, "insight": thread.insight})
+    return clean
 
 
 def run_connections(date_iso: str | None = None) -> list[dict[str, Any]]:
@@ -70,10 +149,9 @@ def run_connections(date_iso: str | None = None) -> list[dict[str, Any]]:
         logger.error("connections: Claude call failed: %s", exc)
         return []
 
-    threads = _parse_threads(raw)
-    if not isinstance(threads, list):
-        threads = []
+    valid_ids = {row["id"] for row in rows}
+    threads = _validate_threads(_parse_threads(raw), valid_ids)
 
     db.upsert_connections(date_iso, json.dumps(threads))
-    logger.info("connections: %d threads found for %s", len(threads), date_iso)
+    logger.info("connections: %d valid threads for %s", len(threads), date_iso)
     return threads
