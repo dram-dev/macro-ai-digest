@@ -148,42 +148,58 @@ def summarize(limit: int | None) -> None:
 @click.option("--run-type", default="manual", help="Tag for run_log (am/pm/manual)")
 @click.option("--skip-publish", is_flag=True, help="Don't write to Obsidian (debug)")
 def pipeline(run_type: str, skip_publish: bool) -> None:
-    """Full pipeline: ingest → triage → summarize → publish to Obsidian."""
+    """Full pipeline: ingest → triage → summarize → publish to Obsidian.
+
+    Required stages (ingest, triage, both summarize passes, publish) gate the
+    run: if one fails the pipeline stops, prints a run-quality summary, and exits
+    non-zero so launchd/cron can't mistake a broken run for a good one. The 3c–3k
+    enrichment passes stay best-effort — a failure is recorded and reported but
+    never blocks the digest.
+    """
     from digest.triage import run_triage
     from digest.summarize import run_summarize
     from digest.obsidian import publish as obs_publish
 
     db.init_db()
 
-    # Stage 1 — ingest all
-    console.rule("[bold cyan]stage 1: ingest")
-    run_ingest(INGESTORS, list(INGESTORS), run_type, console, per_source_rule=False)
+    failures: list[str] = []        # "stage (severity): error" for the summary
+    required_failure = False
 
-    # Stage 2 — triage everything new
-    console.rule("[bold cyan]stage 2: triage")
-    t = run_triage()
-    console.print(
-        f"  [green]✓[/green] kept={t['kept']} dropped={t['dropped']} errors={t['errors']}"
-    )
+    # ── required: ingest → triage → summarize (a failure halts the run) ──────
+    try:
+        # Stage 1 — ingest all
+        console.rule("[bold cyan]stage 1: ingest")
+        run_ingest(INGESTORS, list(INGESTORS), run_type, console, per_source_rule=False)
 
-    # Stage 3a — summarize clipped items first, with NO cap. The user curated
-    # these by hand; they shouldn't lose to RSS noise in the cap fight.
-    console.rule("[bold cyan]stage 3a: summarize (clipped, uncapped)")
-    sc = run_summarize(source="clipped", uncapped=True)
-    console.print(
-        f"  [green]✓[/green] clipped: succeeded={sc['succeeded']} "
-        f"failed={sc['failed']} ready={sc['ready']}"
-    )
+        # Stage 2 — triage everything new
+        console.rule("[bold cyan]stage 2: triage")
+        t = run_triage()
+        console.print(
+            f"  [green]✓[/green] kept={t['kept']} dropped={t['dropped']} errors={t['errors']}"
+        )
 
-    # Stage 3b — summarize the rest, capped per SUMMARIZER_MAX_PER_RUN.
-    console.rule("[bold cyan]stage 3b: summarize (rest, capped)")
-    s = run_summarize()
-    console.print(
-        f"  [green]✓[/green] succeeded={s['succeeded']} failed={s['failed']} ready={s['ready']}"
-    )
+        # Stage 3a — summarize clipped items first, with NO cap. The user curated
+        # these by hand; they shouldn't lose to RSS noise in the cap fight.
+        console.rule("[bold cyan]stage 3a: summarize (clipped, uncapped)")
+        sc = run_summarize(source="clipped", uncapped=True)
+        console.print(
+            f"  [green]✓[/green] clipped: succeeded={sc['succeeded']} "
+            f"failed={sc['failed']} ready={sc['ready']}"
+        )
 
-    # Stages 3c–3i — enrichment passes, all best-effort and non-blocking.
-    # Each entry: (stage id, display name, runner, result-line formatter).
+        # Stage 3b — summarize the rest, capped per SUMMARIZER_MAX_PER_RUN.
+        console.rule("[bold cyan]stage 3b: summarize (rest, capped)")
+        s = run_summarize()
+        console.print(
+            f"  [green]✓[/green] succeeded={s['succeeded']} failed={s['failed']} ready={s['ready']}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [red]✗[/red] required stage failed: {exc}")
+        failures.append(f"ingest/triage/summarize (required): {exc}")
+        required_failure = True
+
+    # ── enrichment: best-effort passes, only if the core succeeded ──────────
+    # Each entry: (stage id, display name, runner). A runner returns a result line.
     def _connections() -> str:
         from digest.connections import run_connections
         return f"{len(run_connections())} connection threads found"
@@ -253,27 +269,48 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
         ("3j", "outcomes", _outcomes),
         ("3k", "predictions", _predictions),
     ]
-    for stage_id, name, runner in enrichment_stages:
-        console.rule(f"[bold cyan]stage {stage_id}: {name}")
-        try:
-            console.print(f"  [green]✓[/green] {runner()}")
-        except Exception as exc:  # noqa: BLE001
-            console.print(f"  [yellow]⚠[/yellow] {name} skipped: {exc}")
+    if not required_failure:
+        for stage_id, name, runner in enrichment_stages:
+            console.rule(f"[bold cyan]stage {stage_id}: {name}")
+            try:
+                console.print(f"  [green]✓[/green] {runner()}")
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"  [yellow]⚠[/yellow] {name} skipped: {exc}")
+                failures.append(f"{name} (optional): {exc}")
 
-    # Stage 4 — write to Obsidian
+    # ── required: publish (the run's actual output) ─────────────────────────
+    publish_skipped = skip_publish
     if skip_publish:
         console.rule("[bold yellow]stage 4: publish (skipped)")
-        return
-    console.rule("[bold cyan]stage 4: publish")
-    try:
-        result = obs_publish()
-        console.print(
-            f"  [green]✓[/green] daily={result['daily_items']} items, "
-            f"topic_archives={result['topic_archives']}"
-        )
-        console.print(f"  [dim]→ {result['daily_path']}[/dim]")
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"  [red]✗[/red] publish failed: {exc}")
+    elif required_failure:
+        console.rule("[bold yellow]stage 4: publish (skipped — upstream failure)")
+        publish_skipped = True
+    else:
+        console.rule("[bold cyan]stage 4: publish")
+        try:
+            result = obs_publish()
+            console.print(
+                f"  [green]✓[/green] daily={result['daily_items']} items, "
+                f"topic_archives={result['topic_archives']}"
+            )
+            console.print(f"  [dim]→ {result['daily_path']}[/dim]")
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"  [red]✗[/red] publish failed: {exc}")
+            failures.append(f"publish (required): {exc}")
+            required_failure = True
+
+    # ── run-quality summary + exit code ─────────────────────────────────────
+    console.rule("[bold]run quality")
+    if not failures:
+        suffix = "  [dim](publish skipped)[/dim]" if publish_skipped else ""
+        console.print(f"  [green]✓[/green] all stages ok{suffix}")
+    else:
+        for f in failures:
+            console.print(f"  [red]•[/red] {f}")
+        console.print(f"  [dim]{len(failures)} stage failure(s)[/dim]")
+
+    if required_failure:
+        raise SystemExit(1)
 
 
 @main.command()
