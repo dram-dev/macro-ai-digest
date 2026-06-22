@@ -176,13 +176,13 @@ To roll back to JSON mode at any point: edit `.env` and set `REDDIT_USE_PRAW=fal
 ## PHASE 2 — Triage + Summarization  *(active — code shipped)*
 
 ### What it does
-Local Qwen 14B reads every newly-ingested item and decides keep-or-drop with a topic and score. The top-N items that survived (default 20, capped) are then sent to Claude Code via `claude -p` for the rich "summary + why it matters + confidence + see-also" treatment. Results land in the same SQLite items table; Phase 3 will write them to Obsidian.
+Local Qwen 14B reads every newly-ingested item and decides keep-or-drop with a topic and score. The top-N items that survived (default 20, capped) are then summarized by the **local MLX server** (`mlx_local`, the default backend) for the rich "summary + why it matters + confidence + see-also" treatment. The backend is pluggable — `claude_cli_pro`, `haiku_api`, `gemini_flash_free`, and `local_qwen` are drop-in alternatives via `SUMMARIZER_BACKEND`. Results land in the same SQLite items table; Phase 3 will write them to Obsidian.
 
 ### [ME — DONE]
 - [x] `src/digest/db.py` — Phase 2 schema migrations (idempotent, validated)
 - [x] `src/digest/triage.py` — Ollama HTTP client, JSON-mode prompts, decision normalizer
-- [x] `src/digest/summarize.py` — backend-abstracted summarizer with 4 backends:
-      `claude_cli_pro` (default), `haiku_api`, `gemini_flash_free`, `local_qwen`
+- [x] `src/digest/summarize.py` — backend-abstracted summarizer with 5 backends:
+      `mlx_local` (default), `claude_cli_pro`, `haiku_api`, `gemini_flash_free`, `local_qwen`
 - [x] `src/digest/cli.py` — new commands: `digest triage`, `digest summarize`, `digest pipeline`
 - [x] `digest stats` extended with triage status and 7-day summarizer activity
 - [x] `summarizer_log` table records duration, char counts, status per call
@@ -214,15 +214,16 @@ Local Qwen 14B reads every newly-ingested item and decides keep-or-drop with a t
 Every summarizer call writes to `summarizer_log` with input/output character counts. After a few real runs:
 
 - [ ] Check usage: `uv run digest stats` — bottom table shows backend activity over the last 7 days
-- [ ] If Pro rate limits collide with your interactive Claude work: open `.env`, set `SUMMARIZER_BACKEND=haiku_api`, add `ANTHROPIC_API_KEY`, set a $5/mo budget cap in Anthropic Console. No code changes.
-- [ ] Wider fallback ladder: `claude_cli_pro` → `haiku_api` → `gemini_flash_free` → `local_qwen`. All four share the exact same prompts and output schema; flip in `.env`.
+- [ ] If you switch to `claude_cli_pro` and Pro rate limits collide with your interactive Claude work: open `.env`, set `SUMMARIZER_BACKEND=haiku_api`, add `ANTHROPIC_API_KEY`, set a $5/mo budget cap in Anthropic Console. No code changes.
+- [ ] Backend ladder (default first): `mlx_local` → `claude_cli_pro` → `haiku_api` → `gemini_flash_free` → `local_qwen`. All share the exact same prompts and output schema; flip in `.env`.
 
 ### Tunables in `.env`
 
 ```
-SUMMARIZER_BACKEND=claude_cli_pro     # the kill-switch
-SUMMARIZER_MODEL=sonnet               # sonnet (recommended) | opus | haiku
-SUMMARIZER_MAX_PER_RUN=20             # hard cap; protects Pro budget
+SUMMARIZER_BACKEND=mlx_local          # local MLX (default); cloud backends are the kill-switch
+SUMMARIZER_MODEL=sonnet               # used by cloud backends: sonnet | opus | haiku
+SUMMARIZER_MAX_PER_RUN=20             # hard cap per run
+SUMMARIZER_MAX_PER_SOURCE=15          # per-source cap within a run
 SUMMARIZER_TIMEOUT_SEC=120            # per-item ceiling
 OLLAMA_MODEL=qwen2.5:14b              # try qwen2.5:32b if 14B underdelivers
 TRIAGE_MIN_SCORE=0.5                  # raise to be more selective
