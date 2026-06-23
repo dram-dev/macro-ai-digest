@@ -352,7 +352,7 @@ def publish(date_iso: str | None, topics_only: bool) -> None:
         )
         console.print(f"  [dim]→ {result['daily_path']}[/dim]")
     except Exception as exc:  # noqa: BLE001
-        console.print(f"  [red]✗[/red] {exc}")
+        console.print(f"  [red]✗[/red] {escape(str(exc))}")
 
 
 @main.command()
@@ -376,7 +376,7 @@ def weekly(date_iso: str | None) -> None:
         )
         console.print(f"  [dim]→ {result['path']}[/dim]")
     except Exception as exc:  # noqa: BLE001
-        console.print(f"  [red]✗[/red] {exc}")
+        console.print(f"  [red]✗[/red] {escape(str(exc))}")
 
 
 @main.command()
@@ -430,7 +430,7 @@ def regime() -> None:
             console.print(t2)
         console.print(f"\n[dim]{result.narrative}[/dim]")
     except Exception as exc:  # noqa: BLE001
-        console.print(f"  [red]✗[/red] {exc}")
+        console.print(f"  [red]✗[/red] {escape(str(exc))}")
 
 
 @main.command()
@@ -490,7 +490,7 @@ def storylines(date_iso: str | None) -> None:
         n = write_storylines(paths)
         console.print(f"  [dim]→ {n} storyline pages + index written[/dim]")
     except Exception as exc:  # noqa: BLE001
-        console.print(f"  [yellow]⚠[/yellow] page write skipped: {exc}")
+        console.print(f"  [yellow]⚠[/yellow] page write skipped: {escape(str(exc))}")
 
 
 @main.command("topic-state")
@@ -550,7 +550,7 @@ def predictions(backfill: bool) -> None:
         n = write_scorecard(paths)
         console.print(f"  [dim]→ Scorecard.md written ({n} predictions)[/dim]")
     except Exception as exc:  # noqa: BLE001
-        console.print(f"  [yellow]⚠[/yellow] scorecard write skipped: {exc}")
+        console.print(f"  [yellow]⚠[/yellow] scorecard write skipped: {escape(str(exc))}")
 
 
 @main.command()
@@ -604,7 +604,7 @@ def essay(date_iso: str | None) -> None:
         )
         console.print(f"  [dim]→ {result['path']}[/dim]")
     except Exception as exc:  # noqa: BLE001
-        console.print(f"  [red]✗[/red] {exc}")
+        console.print(f"  [red]✗[/red] {escape(str(exc))}")
 
 
 @main.command()
@@ -706,7 +706,7 @@ def dashboard() -> None:
         )
         console.print(f"  [dim]→ {result['path']}[/dim]")
     except Exception as exc:  # noqa: BLE001
-        console.print(f"  [red]✗[/red] {exc}")
+        console.print(f"  [red]✗[/red] {escape(str(exc))}")
 
 
 @main.command()
@@ -755,7 +755,7 @@ def stocks(limit: int) -> None:
         if result["path"]:
             console.print(f"  [dim]→ {result['path']}[/dim]")
     except Exception as exc:  # noqa: BLE001
-        console.print(f"  [red]✗[/red] {exc}")
+        console.print(f"  [red]✗[/red] {escape(str(exc))}")
 
 
 @main.command()
@@ -820,7 +820,7 @@ def debate(date_iso: str | None) -> None:
         )
         console.print(f"  [dim]→ {result['path']}[/dim]")
     except Exception as exc:  # noqa: BLE001
-        console.print(f"  [red]✗[/red] {exc}")
+        console.print(f"  [red]✗[/red] {escape(str(exc))}")
 
 
 @main.command("init-db")
