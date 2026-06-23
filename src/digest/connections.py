@@ -69,10 +69,7 @@ class ConnectionThread(BaseModel):
     @field_validator("item_ids")
     @classmethod
     def _ids_min_unique(cls, v: list[int]) -> list[int]:
-        unique: list[int] = []
-        for i in v:
-            if i not in unique:
-                unique.append(i)
+        unique = list(dict.fromkeys(v))   # dedupe, order-preserving
         if len(unique) < _MIN_ITEMS:
             raise ValueError(f"fewer than {_MIN_ITEMS} unique item_ids")
         return unique
