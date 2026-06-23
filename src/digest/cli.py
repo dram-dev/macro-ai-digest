@@ -7,6 +7,7 @@ import sys
 import click
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.markup import escape
 from rich.table import Table
 
 from digest import db
@@ -194,7 +195,7 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
             f"  [green]✓[/green] succeeded={s['succeeded']} failed={s['failed']} ready={s['ready']}"
         )
     except Exception as exc:  # noqa: BLE001
-        console.print(f"  [red]✗[/red] required stage failed: {exc}")
+        console.print(f"  [red]✗[/red] required stage failed: {escape(str(exc))}")
         failures.append(f"ingest/triage/summarize (required): {exc}")
         required_failure = True
 
@@ -275,7 +276,7 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
             try:
                 console.print(f"  [green]✓[/green] {runner()}")
             except Exception as exc:  # noqa: BLE001
-                console.print(f"  [yellow]⚠[/yellow] {name} skipped: {exc}")
+                console.print(f"  [yellow]⚠[/yellow] {name} skipped: {escape(str(exc))}")
                 failures.append(f"{name} (optional): {exc}")
 
     # ── required: publish (the run's actual output) ─────────────────────────
@@ -295,7 +296,7 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
             )
             console.print(f"  [dim]→ {result['daily_path']}[/dim]")
         except Exception as exc:  # noqa: BLE001
-            console.print(f"  [red]✗[/red] publish failed: {exc}")
+            console.print(f"  [red]✗[/red] publish failed: {escape(str(exc))}")
             failures.append(f"publish (required): {exc}")
             required_failure = True
 
@@ -306,7 +307,7 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
         console.print(f"  [green]✓[/green] all stages ok{suffix}")
     else:
         for f in failures:
-            console.print(f"  [red]•[/red] {f}")
+            console.print(f"  [red]•[/red] {escape(f)}")
         console.print(f"  [dim]{len(failures)} stage failure(s)[/dim]")
 
     if required_failure:
