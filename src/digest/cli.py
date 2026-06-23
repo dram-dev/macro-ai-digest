@@ -280,12 +280,10 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
                 failures.append(f"{name} (optional): {exc}")
 
     # ── required: publish (the run's actual output) ─────────────────────────
-    publish_skipped = skip_publish
     if skip_publish:
         console.rule("[bold yellow]stage 4: publish (skipped)")
     elif required_failure:
         console.rule("[bold yellow]stage 4: publish (skipped — upstream failure)")
-        publish_skipped = True
     else:
         console.rule("[bold cyan]stage 4: publish")
         try:
@@ -303,7 +301,7 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
     # ── run-quality summary + exit code ─────────────────────────────────────
     console.rule("[bold]run quality")
     if not failures:
-        suffix = "  [dim](publish skipped)[/dim]" if publish_skipped else ""
+        suffix = "  [dim](publish skipped)[/dim]" if skip_publish else ""
         console.print(f"  [green]✓[/green] all stages ok{suffix}")
     else:
         for f in failures:
