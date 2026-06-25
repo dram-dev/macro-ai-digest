@@ -11,6 +11,7 @@ import feedparser
 import yaml
 
 from digest.ingest.base import IngestedItem, IngestorBase
+from digest.ingest.fulltext import enrich
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ class SubstackIngestor(IngestorBase):
                             title=entry.get("title", "(no title)"),
                             url=entry.get("link"),
                             author=entry.get("author"),
-                            content=_entry_content(entry),
+                            content=enrich(_entry_content(entry), entry.get("link")),
                             published_at=_entry_date(entry),
                             metadata={
                                 "feed": label,

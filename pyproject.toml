@@ -26,6 +26,7 @@ dependencies = [
     "pandas>=2.0",
     "databricks-sql-connector>=4.2.6",
     "digest-core",
+    "trafilatura>=2.1.0",
 ]
 
 [project.scripts]

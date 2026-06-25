@@ -98,6 +98,19 @@ class Settings(BaseSettings):
     yahoo_rsi_oversold: float = Field(default=28.0, alias="YAHOO_RSI_OVERSOLD")
     hn_min_points: int = Field(default=100, alias="HN_MIN_POINTS")
 
+    # Full-text extraction — when a feed ships only a teaser (RSS/Substack
+    # summary, HN external link), fetch the source article and extract the main
+    # body so triage + summarize see real content instead of a snippet. Set
+    # FULLTEXT_ENABLED=false to keep raw feed excerpts.
+    fulltext_enabled: bool = Field(default=True, alias="FULLTEXT_ENABLED")
+    # A feed body shorter than this (chars) is treated as an excerpt worth
+    # expanding via a source fetch.
+    fulltext_min_chars: int = Field(default=600, alias="FULLTEXT_MIN_CHARS")
+    # Cap extracted body length so a long article can't blow the triage /
+    # summarize token budget.
+    fulltext_max_chars: int = Field(default=8000, alias="FULLTEXT_MAX_CHARS")
+    fulltext_timeout_sec: int = Field(default=12, alias="FULLTEXT_TIMEOUT_SEC")
+
     # Databricks medallion sink (cross-domain lakehouse). All writes no-op when
     # databricks_enabled=False. Shared-catalog model: one catalog (`digest`),
     # domain-prefixed schemas — macro uses macro_bronze/macro_silver/macro_gold
