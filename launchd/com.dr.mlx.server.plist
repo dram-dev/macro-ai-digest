@@ -9,7 +9,7 @@
     <array>
         <string>/Users/dramsey/.venvs/mlx/bin/mlx_lm.server</string>
         <string>--model</string>
-        <string>mlx-community/Qwen3.5-27B-4bit</string>
+        <string>mlx-community/Qwen3.6-27B-4bit</string>
         <string>--port</string>
         <string>8080</string>
         <string>--log-level</string>
