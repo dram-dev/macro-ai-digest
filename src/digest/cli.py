@@ -298,6 +298,25 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
             failures.append(f"publish (required): {exc}")
             required_failure = True
 
+    # ── best-effort: push notifications ─────────────────────────────────────
+    # Alerts ride on summarized items (stage 3), so they run even when publish
+    # is skipped — but never when the core failed (there'd be nothing to alert).
+    if not required_failure:
+        console.rule("[bold cyan]stage 5: notify")
+        try:
+            from datetime import datetime, timezone
+
+            from digest.sinks.notify import notify_brief_ready, notify_top_signals
+
+            nr = notify_top_signals()
+            notify_brief_ready(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+            console.print(
+                f"  [green]✓[/green] notify: sent={nr['sent']} candidates={nr['candidates']}"
+            )
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"  [yellow]⚠[/yellow] notify skipped: {escape(str(exc))}")
+            failures.append(f"notify (optional): {exc}")
+
     # ── run-quality summary + exit code ─────────────────────────────────────
     console.rule("[bold]run quality")
     if not failures:
@@ -351,6 +370,30 @@ def publish(date_iso: str | None, topics_only: bool) -> None:
         console.print(f"  [dim]→ {result['daily_path']}[/dim]")
     except Exception as exc:  # noqa: BLE001
         console.print(f"  [red]✗[/red] {escape(str(exc))}")
+
+
+@main.command()
+@click.option("--test", "test_only", is_flag=True, help="Send a test push and exit")
+def notify(test_only: bool) -> None:
+    """Send pending high-signal Telegram pushes (or --test to verify setup)."""
+    from digest.sinks.notify import notifier, notify_top_signals
+
+    db.init_db()
+    console.rule("[bold cyan]notify")
+    if not notifier.enabled:
+        console.print(
+            "  [yellow]disabled or unconfigured[/yellow] — set TELEGRAM_BOT_TOKEN + "
+            "TELEGRAM_CHAT_ID (and NOTIFY_ENABLED=true)"
+        )
+        return
+    if test_only:
+        ok = notifier.send_test()
+        console.print("  [green]✓[/green] test sent" if ok else "  [red]✗[/red] test failed")
+        return
+    nr = notify_top_signals()
+    console.print(
+        f"  [green]✓[/green] sent={nr['sent']} candidates={nr['candidates']}"
+    )
 
 
 @main.command()

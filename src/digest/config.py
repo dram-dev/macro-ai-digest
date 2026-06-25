@@ -111,6 +111,19 @@ class Settings(BaseSettings):
     fulltext_max_chars: int = Field(default=8000, alias="FULLTEXT_MAX_CHARS")
     fulltext_timeout_sec: int = Field(default=12, alias="FULLTEXT_TIMEOUT_SEC")
 
+    # Telegram push notifications — terse mobile alerts for high-signal items.
+    # No-op (sends nothing) unless both token + chat id are set. Get them from
+    # @BotFather (token) and getUpdates / @userinfobot (chat id).
+    telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
+    notify_enabled: bool = Field(default=True, alias="NOTIFY_ENABLED")
+    # Triage score a new item must reach to earn a push. 0.80 = "Balanced".
+    notify_min_score: float = Field(default=0.80, alias="NOTIFY_MIN_SCORE")
+    # Cap pushes per pipeline run so one busy day can't spam the phone.
+    notify_max_per_run: int = Field(default=5, alias="NOTIFY_MAX_PER_RUN")
+    # Optional once-per-run "Brief ready" ping. Off by default.
+    notify_brief_ping: bool = Field(default=False, alias="NOTIFY_BRIEF_PING")
+
     # Databricks medallion sink (cross-domain lakehouse). All writes no-op when
     # databricks_enabled=False. Shared-catalog model: one catalog (`digest`),
     # domain-prefixed schemas — macro uses macro_bronze/macro_silver/macro_gold
