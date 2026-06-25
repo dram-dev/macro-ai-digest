@@ -149,6 +149,14 @@ MIGRATIONS = [
         name        TEXT NOT NULL,
         created_at  TEXT NOT NULL DEFAULT (datetime('now'))
     )""",
+    # Push-notification dedup log — one row per alert ever sent, keyed so the
+    # same signal never re-fires (covers am/pm double-runs permanently).
+    """CREATE TABLE IF NOT EXISTS notify_log (
+        alert_key   TEXT PRIMARY KEY,
+        kind        TEXT NOT NULL,
+        item_id     INTEGER,
+        sent_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
 ]
 
 
@@ -269,6 +277,38 @@ def recent_kept_titles(hours: int = 24) -> list[str]:
     with get_conn() as conn:
         rows = conn.execute(sql, (f"-{hours} hours",)).fetchall()
     return [r["title"] for r in rows if r["title"]]
+
+
+def unnotified_high_signals(min_score: float, limit: int) -> list[sqlite3.Row]:
+    """Kept + summarized items scoring >= min_score that haven't been pushed yet.
+
+    A left-join against notify_log excludes anything already alerted, so the
+    am and pm runs never re-fire the same signal. Highest score first.
+    """
+    sql = """
+        SELECT i.id, i.source, i.url, i.title, i.topic,
+               i.summary, i.why_it_matters, i.triage_score
+        FROM items i
+        LEFT JOIN notify_log n
+               ON n.alert_key = 'signal:' || i.id
+        WHERE i.triage_decision = 'keep'
+          AND i.summary IS NOT NULL
+          AND i.triage_score >= ?
+          AND n.alert_key IS NULL
+        ORDER BY i.triage_score DESC, i.ingested_at DESC
+        LIMIT ?
+    """
+    with get_conn() as conn:
+        return conn.execute(sql, (min_score, limit)).fetchall()
+
+
+def record_notification(alert_key: str, kind: str, item_id: int | None = None) -> None:
+    """Mark an alert as sent so it never re-fires. Idempotent (INSERT OR IGNORE)."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO notify_log (alert_key, kind, item_id) VALUES (?, ?, ?)",
+            (alert_key, kind, item_id),
+        )
 
 
 def items_needing_ensemble(limit: int = 200) -> list[sqlite3.Row]:

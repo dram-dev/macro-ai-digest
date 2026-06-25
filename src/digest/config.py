@@ -111,6 +111,19 @@ class Settings(BaseSettings):
     fulltext_max_chars: int = Field(default=8000, alias="FULLTEXT_MAX_CHARS")
     fulltext_timeout_sec: int = Field(default=12, alias="FULLTEXT_TIMEOUT_SEC")
 
+    # Telegram push notifications — terse mobile alerts for high-signal items.
+    # No-op (sends nothing) unless both token + chat id are set. Get them from
+    # @BotFather (token) and getUpdates / @userinfobot (chat id).
+    telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
+    notify_enabled: bool = Field(default=True, alias="NOTIFY_ENABLED")
+    # Triage score a new item must reach to earn a push. 0.80 = "Balanced".
+    notify_min_score: float = Field(default=0.80, alias="NOTIFY_MIN_SCORE")
+    # Cap pushes per pipeline run so one busy day can't spam the phone.
+    notify_max_per_run: int = Field(default=5, alias="NOTIFY_MAX_PER_RUN")
+    # Optional once-per-run "Brief ready" ping. Off by default.
+    notify_brief_ping: bool = Field(default=False, alias="NOTIFY_BRIEF_PING")
+
     # Databricks medallion sink (cross-domain lakehouse). All writes no-op when
     # databricks_enabled=False. Shared-catalog model: one catalog (`digest`),
     # domain-prefixed schemas — macro uses macro_bronze/macro_silver/macro_gold
@@ -142,6 +155,19 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"URL must point to localhost for safety, got hostname: {hostname!r}"
             )
+        return v
+
+    @field_validator("telegram_bot_token", mode="before")
+    @classmethod
+    def _strip_bot_prefix(cls, v: str) -> str:
+        """Tolerate a token pasted with the URL's 'bot' prefix (.../bot<TOKEN>).
+
+        Real tokens always start with the bot's numeric id, so a leading 'bot'
+        is the doubled-prefix mistake that yields a 404 from the Telegram API.
+        """
+        v = str(v).strip()
+        if re.match(r"(?i)^bot\d", v):
+            v = v[3:]
         return v
 
 

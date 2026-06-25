@@ -133,7 +133,22 @@ CLI commands: `ingest`, `sources`, `triage`, `summarize`, `pipeline`, `publish`,
 `weekly`, `regime`, `ensemble`, `outcomes`, `cluster`, `storylines`,
 `predictions`, `topic-state`, `signals`, `essay`, `debate`, `dashboard`,
 `sentiment`, `entities`, `stocks`, `calendar`, `velocity`, `backtest`,
-`recent`, `stats`, `health`, `security`, `init-db`.
+`notify`, `recent`, `stats`, `health`, `security`, `init-db`.
+
+## Telegram push notifications (optional)
+
+High-signal items (triage score ≥ `NOTIFY_MIN_SCORE`, default 0.80) can fire a
+terse Telegram push at the end of each pipeline run — deduped per item so the
+am/pm runs never double-fire. Output is otherwise file-only (Obsidian).
+
+1. Message [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token.
+2. Message your new bot once, then read your chat id from
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` (or [@userinfobot](https://t.me/userinfobot)).
+3. Set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` in `.env`.
+4. Verify: `uv run digest notify --test` (a banner should land on your phone).
+
+Set `NOTIFY_BRIEF_PING=true` for an extra once-per-run "Brief ready" ping with
+an `obsidian://` deep link. Leave the token blank to disable entirely.
 
 ## Gmail first-run OAuth
 
