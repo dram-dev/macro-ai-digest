@@ -11,6 +11,7 @@ import requests
 
 from digest.config import settings
 from digest.ingest.base import IngestedItem, IngestorBase
+from digest.ingest.fulltext import enrich
 
 logger = logging.getLogger(__name__)
 
@@ -65,15 +66,22 @@ class HNIngestor(IngestorBase):
                             )
                         except ValueError:
                             published = None
+                    # Most HN stories link to an external article with no
+                    # story_text — expand from that URL. Self/Ask-HN posts have
+                    # no external link, so we keep their story_text as-is.
+                    external_url = hit.get("url")
+                    content = hit.get("story_text") or ""
+                    if external_url:
+                        content = enrich(content, external_url)
                     items.append(
                         IngestedItem(
                             source=self.name,
                             source_id=hid,
                             title=hit.get("title") or "(no title)",
-                            url=hit.get("url")
+                            url=external_url
                             or f"https://news.ycombinator.com/item?id={hid}",
                             author=hit.get("author"),
-                            content=hit.get("story_text") or "",
+                            content=content,
                             published_at=published
                             or datetime.now(timezone.utc),
                             metadata={
