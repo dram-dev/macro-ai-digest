@@ -8,7 +8,23 @@ from __future__ import annotations
 import pytest
 
 from digest import db
+from digest.config import Settings
 from digest.sinks import notify
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("bot8814:ABCdef", "8814:ABCdef"),   # doubled 'bot' prefix → stripped
+        ("BOT8814:ABCdef", "8814:ABCdef"),   # case-insensitive
+        ("8814:ABCdef", "8814:ABCdef"),      # clean token → untouched
+        ("  8814:ABCdef  ", "8814:ABCdef"),  # surrounding whitespace trimmed
+        ("", ""),                            # empty stays empty (disabled)
+    ],
+)
+def test_token_bot_prefix_is_stripped(raw, expected):
+    s = Settings(_env_file=None, TELEGRAM_BOT_TOKEN=raw)
+    assert s.telegram_bot_token == expected
 
 
 class _Resp:

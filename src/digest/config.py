@@ -157,5 +157,18 @@ class Settings(BaseSettings):
             )
         return v
 
+    @field_validator("telegram_bot_token", mode="before")
+    @classmethod
+    def _strip_bot_prefix(cls, v: str) -> str:
+        """Tolerate a token pasted with the URL's 'bot' prefix (.../bot<TOKEN>).
+
+        Real tokens always start with the bot's numeric id, so a leading 'bot'
+        is the doubled-prefix mistake that yields a 404 from the Telegram API.
+        """
+        v = str(v).strip()
+        if re.match(r"(?i)^bot\d", v):
+            v = v[3:]
+        return v
+
 
 settings = Settings()
