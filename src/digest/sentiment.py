@@ -17,6 +17,7 @@ import requests
 
 from digest import db
 from digest.config import settings
+from digest_core.summarize.backends import mlx_serialize
 
 logger = logging.getLogger(__name__)
 
@@ -42,16 +43,17 @@ def _classify_item(title: str, summary: str | None, why: str | None) -> dict[str
 
     url = settings.mlx_server_url.rstrip("/") + "/v1/chat/completions"
     try:
-        r = requests.post(url, json={
-            "model": settings.mlx_model,
-            "messages": [
-                {"role": "system", "content": _SYSTEM},
-                {"role": "user",   "content": text},
-            ],
-            "max_tokens": 120,
-            "temperature": 0.1,
-            "chat_template_kwargs": {"enable_thinking": False},
-        }, timeout=settings.summarizer_timeout_sec)
+        with mlx_serialize():   # take turns on the shared MLX server (see digest_core)
+            r = requests.post(url, json={
+                "model": settings.mlx_model,
+                "messages": [
+                    {"role": "system", "content": _SYSTEM},
+                    {"role": "user",   "content": text},
+                ],
+                "max_tokens": 120,
+                "temperature": 0.1,
+                "chat_template_kwargs": {"enable_thinking": False},
+            }, timeout=settings.summarizer_timeout_sec)
         r.raise_for_status()
         raw = r.json()["choices"][0]["message"]["content"].strip()
         # Strip markdown code fences if model includes them despite instructions

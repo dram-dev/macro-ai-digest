@@ -21,6 +21,7 @@ import requests
 
 from digest import db
 from digest.config import settings
+from digest_core.summarize.backends import mlx_serialize
 
 logger = logging.getLogger(__name__)
 
@@ -76,16 +77,17 @@ One clear, actionable recommendation."""
 
 def _mlx(system: str, user: str, max_tokens: int = 800) -> str:
     url = settings.mlx_server_url.rstrip("/") + "/v1/chat/completions"
-    r = requests.post(url, json={
-        "model":    settings.mlx_model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user",   "content": user},
-        ],
-        "max_tokens":             max_tokens,
-        "temperature":            0.5,
-        "chat_template_kwargs": {"enable_thinking": False},
-    }, timeout=settings.summarizer_timeout_sec * 2)
+    with mlx_serialize():   # take turns on the shared MLX server (see digest_core)
+        r = requests.post(url, json={
+            "model":    settings.mlx_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user},
+            ],
+            "max_tokens":             max_tokens,
+            "temperature":            0.5,
+            "chat_template_kwargs": {"enable_thinking": False},
+        }, timeout=settings.summarizer_timeout_sec * 2)
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"].strip()
 
