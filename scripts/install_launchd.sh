@@ -20,7 +20,7 @@ echo "Target:  $LAUNCH_AGENTS"
 mkdir -p "$LAUNCH_AGENTS"
 mkdir -p "$PROJECT_PATH/logs"
 
-for label in am pm weekly signals essay calendar velocity backtest debate dashboard; do
+for label in am pm weekly signals essay calendar velocity backtest debate dashboard askbot; do
     src="$PROJECT_PATH/launchd/com.dr.digest.${label}.plist"
     dst="$LAUNCH_AGENTS/com.dr.digest.${label}.plist"
 

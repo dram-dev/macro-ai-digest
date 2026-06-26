@@ -135,7 +135,7 @@ CLI commands: `ingest`, `sources`, `triage`, `summarize`, `pipeline`, `publish`,
 `weekly`, `regime`, `ensemble`, `outcomes`, `cluster`, `storylines`,
 `predictions`, `topic-state`, `signals`, `essay`, `debate`, `dashboard`,
 `sentiment`, `entities`, `stocks`, `calendar`, `velocity`, `backtest`,
-`notify`, `recent`, `stats`, `health`, `security`, `init-db`.
+`notify`, `ask`, `ask-bot`, `recent`, `stats`, `health`, `security`, `init-db`.
 
 ## Telegram push notifications (optional)
 
@@ -148,6 +148,32 @@ am/pm runs never double-fire. Output is otherwise file-only (Obsidian).
    `https://api.telegram.org/bot<TOKEN>/getUpdates` (or [@userinfobot](https://t.me/userinfobot)).
 3. Set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` in `.env`.
 4. Verify: `uv run digest notify --test` (a banner should land on your phone).
+
+## Ask the archive (local RAG)
+
+Query the kept-item corpus in natural language — retrieval over local Ollama
+embeddings (`nomic-embed-text`) + answer synthesis through the configured
+summarizer backend (MLX-local by default), with `[n]` citations.
+
+```bash
+uv run digest ask "What's the latest on hyperscaler AI capex?"
+uv run digest ask "Any signals on the 2s10s spread?" --days 30 -k 10
+```
+
+The first run embeds the corpus once (cached in `item_embeddings`); later runs
+only embed newly-summarized items.
+
+### Ask from Telegram
+
+`digest ask-bot` runs a long-polling listener (no public endpoint needed) that
+answers questions sent to your bot, replying with the synthesized answer +
+sources. It responds **only** to your configured `TELEGRAM_CHAT_ID`. Run it as a
+daemon via the bundled `com.dr.digest.askbot` launchd job (KeepAlive), or
+foreground for a quick try:
+
+```bash
+uv run digest ask-bot   # then message your bot from your phone
+```
 
 Set `NOTIFY_BRIEF_PING=true` for an extra once-per-run "Brief ready" ping with
 an `obsidian://` deep link. Leave the token blank to disable entirely.

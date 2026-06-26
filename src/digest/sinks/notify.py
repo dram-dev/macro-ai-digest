@@ -27,17 +27,22 @@ from digest.config import settings
 
 logger = logging.getLogger(__name__)
 
-_API = "https://api.telegram.org/bot{token}/sendMessage"
 _TIMEOUT = 10
 
 
 class TelegramNotifier:
-    """Send-only Telegram client. Disabled (no-op) unless token + chat id set."""
+    """Telegram Bot API client. Disabled (no-op) unless token + chat id set.
+
+    Send-only by default; `get_updates` enables the interactive ask-bot listener.
+    """
 
     def __init__(self, token: str, chat_id: str, enabled: bool) -> None:
         self.token = token
         self.chat_id = chat_id
         self.enabled = enabled and bool(token) and bool(chat_id)
+
+    def _url(self, method: str) -> str:
+        return f"https://api.telegram.org/bot{self.token}/{method}"
 
     def send(self, text: str) -> bool:
         """POST one HTML message. True on success; False on no-op or any failure."""
@@ -46,7 +51,7 @@ class TelegramNotifier:
             return False
         try:
             resp = requests.post(
-                _API.format(token=self.token),
+                self._url("sendMessage"),
                 json={
                     "chat_id": self.chat_id,
                     "text": text,
@@ -66,6 +71,36 @@ class TelegramNotifier:
             "✅ <b>macro-ai-digest</b> test alert\n"
             "Telegram notifications are wired up correctly."
         )
+
+    def send_chat_action(self, action: str = "typing") -> None:
+        """Best-effort 'typing…' indicator while a reply is being prepared."""
+        if not self.enabled:
+            return
+        try:
+            requests.post(
+                self._url("sendChatAction"),
+                json={"chat_id": self.chat_id, "action": action},
+                timeout=_TIMEOUT,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("notify: chat action failed: %s", exc)
+
+    def get_updates(self, offset: int | None = None, timeout: int = 30) -> list[dict]:
+        """Long-poll for incoming updates. Returns [] when disabled or on error."""
+        if not self.enabled:
+            return []
+        params: dict = {"timeout": timeout}
+        if offset is not None:
+            params["offset"] = offset
+        try:
+            resp = requests.get(
+                self._url("getUpdates"), params=params, timeout=timeout + 10
+            )
+            resp.raise_for_status()
+            return resp.json().get("result", [])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("notify: get_updates failed: %s", exc)
+            return []
 
 
 def _esc(s: str | None) -> str:

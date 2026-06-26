@@ -157,6 +157,15 @@ MIGRATIONS = [
         item_id     INTEGER,
         sent_at     TEXT NOT NULL DEFAULT (datetime('now'))
     )""",
+    # Cached item embeddings for retrieval (RAG ask-the-archive). One vector
+    # per item, stored as float32 bytes; `model` lets a model swap re-embed.
+    """CREATE TABLE IF NOT EXISTS item_embeddings (
+        item_id    INTEGER PRIMARY KEY REFERENCES items(id),
+        model      TEXT NOT NULL,
+        dim        INTEGER NOT NULL,
+        vector     BLOB NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
 ]
 
 
@@ -339,6 +348,69 @@ def storyline_names_for_items(item_ids: list[int]) -> dict[int, str]:
                 if i in wanted and i not in out:
                     out[i] = row["name"]
     return out
+
+
+def items_missing_embeddings(model: str) -> list[sqlite3.Row]:
+    """Kept+summarized items that have no cached embedding for `model` yet."""
+    sql = """
+        SELECT i.id, i.title, i.summary
+        FROM items i
+        LEFT JOIN item_embeddings e ON e.item_id = i.id AND e.model = ?
+        WHERE i.triage_decision = 'keep'
+          AND i.summary IS NOT NULL
+          AND e.item_id IS NULL
+        ORDER BY i.ingested_at DESC
+    """
+    with get_conn() as conn:
+        return conn.execute(sql, (model,)).fetchall()
+
+
+def store_embeddings(model: str, rows: list[tuple[int, int, bytes]]) -> None:
+    """Persist embeddings. Each row is (item_id, dim, vector_bytes)."""
+    if not rows:
+        return
+    with get_conn() as conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO item_embeddings (item_id, model, dim, vector) "
+            "VALUES (?, ?, ?, ?)",
+            [(iid, model, dim, vec) for (iid, dim, vec) in rows],
+        )
+
+
+def load_embeddings(model: str, days: int = 0) -> list[sqlite3.Row]:
+    """All cached (item_id, dim, vector) for kept+summarized items, newest first.
+
+    days > 0 limits to items ingested within that window.
+    """
+    where = (
+        "WHERE e.model = ? AND i.triage_decision = 'keep' AND i.summary IS NOT NULL"
+    )
+    params: list = [model]
+    if days > 0:
+        where += " AND i.ingested_at >= datetime('now', ?)"
+        params.append(f"-{days} days")
+    sql = f"""
+        SELECT e.item_id, e.dim, e.vector
+        FROM item_embeddings e
+        JOIN items i ON i.id = e.item_id
+        {where}
+        ORDER BY i.ingested_at DESC
+    """
+    with get_conn() as conn:
+        return conn.execute(sql, params).fetchall()
+
+
+def items_by_ids(ids: list[int]) -> dict[int, sqlite3.Row]:
+    """Fetch display fields for a set of item ids, keyed by id."""
+    if not ids:
+        return {}
+    placeholders = ",".join("?" * len(ids))
+    sql = f"""
+        SELECT id, source, url, title, topic, summary, why_it_matters, published_at
+        FROM items WHERE id IN ({placeholders})
+    """
+    with get_conn() as conn:
+        return {r["id"]: r for r in conn.execute(sql, ids).fetchall()}
 
 
 def items_needing_ensemble(limit: int = 200) -> list[sqlite3.Row]:
