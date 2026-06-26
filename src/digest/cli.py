@@ -447,6 +447,26 @@ def ask_bot() -> None:
 
 
 @main.command()
+@click.argument("content", nargs=-1, required=True)
+def capture(content: tuple[str, ...]) -> None:
+    """Capture an X post, link, or text into the clipped flow (next digest run)."""
+    from digest import capture as capture_mod
+
+    db.init_db()
+    console.rule("[bold cyan]capture")
+    try:
+        res = capture_mod.capture(" ".join(content))
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [red]✗[/red] {escape(str(exc))}")
+        return
+    console.print(
+        f"  [green]✓[/green] {res['kind']} captured ({res['chars']} chars): "
+        f"{escape(res['title'])}"
+    )
+    console.print(f"  [dim]→ {res['path']}[/dim]")
+
+
+@main.command()
 @click.option(
     "--date",
     "date_iso",

@@ -175,6 +175,18 @@ foreground for a quick try:
 uv run digest ask-bot   # then message your bot from your phone
 ```
 
+**Forward-to-capture.** Forward an **X/Twitter post**, a link, or paste text to
+the bot and it files the content into the clipped flow (`OBSIDIAN_CLIP_DIR`) for
+the next pipeline run — auto-kept, summarized uncapped, surfaced in the daily
+note. X posts are resolved via the no-auth fxtwitter API (X itself is
+login-walled); other links use the full-text extractor; bare text is filed
+as-is. Plain text is treated as a question, forwards/links as captures —
+override with `/ask` or `/capture`. Test it from the CLI:
+
+```bash
+uv run digest capture "https://x.com/jack/status/20"
+```
+
 Set `NOTIFY_BRIEF_PING=true` for an extra once-per-run "Brief ready" ping with
 an `obsidian://` deep link. Leave the token blank to disable entirely.
 

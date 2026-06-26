@@ -13,7 +13,7 @@ import html
 import logging
 import time
 
-from digest import ask
+from digest import ask, capture
 from digest.config import settings
 from digest.sinks.notify import notifier
 
@@ -22,10 +22,12 @@ logger = logging.getLogger(__name__)
 _MAX_MSG = 4000  # Telegram hard limit is 4096; leave headroom
 _HELP = (
     "🔎 <b>Ask the digest archive</b>\n"
-    "Send any question and I'll answer from the kept items, with sources.\n"
-    "Examples:\n"
+    "Send a question and I'll answer from the kept items, with sources:\n"
     "• <i>What's the latest on hyperscaler capex?</i>\n"
-    "• <i>Any signals on the 2s10s spread?</i>"
+    "• <i>Any signals on the 2s10s spread?</i>\n\n"
+    "📥 <b>Capture</b>\n"
+    "Forward an X/Twitter post, a link, or paste text — I'll file it into the "
+    "digest's clipped folder for the next run. Force it with <code>/capture</code>."
 )
 
 
@@ -54,24 +56,83 @@ def _format_reply(result: dict) -> str:
     return msg[:_MAX_MSG]
 
 
-def _handle_message(text: str) -> bool:
-    """Process one inbound question and reply. Returns True if a reply was sent."""
-    text = (text or "").strip()
-    if not text:
-        return False
-    if text.startswith("/"):  # /start, /help, etc.
-        notifier.send(_HELP)
-        return True
+_FORWARD_KEYS = (
+    "forward_origin", "forward_from", "forward_from_chat",
+    "forward_date", "forward_sender_name",
+)
+
+
+def _is_forward(message: dict) -> bool:
+    return any(k in message for k in _FORWARD_KEYS)
+
+
+def _forward_author(message: dict) -> str | None:
+    """Best-effort original author of a forwarded message (new + legacy API)."""
+    fo = message.get("forward_origin") or {}
+    name = (
+        (fo.get("sender_user") or {}).get("first_name")
+        or fo.get("sender_user_name")
+        or (fo.get("chat") or {}).get("title")
+    )
+    if name:
+        return name
+    ff = message.get("forward_from") or {}
+    return (
+        ff.get("first_name")
+        or (message.get("forward_from_chat") or {}).get("title")
+        or message.get("forward_sender_name")
+    )
+
+
+def _do_question(text: str) -> bool:
     notifier.send_chat_action("typing")
     try:
-        result = ask.answer_question(text)
-        notifier.send(_format_reply(result))
+        notifier.send(_format_reply(ask.answer_question(text)))
     except ask.AskError as exc:
         notifier.send(f"⚠️ {_esc(str(exc))}")
     except Exception as exc:  # noqa: BLE001
         logger.exception("ask-bot: failed to answer")
         notifier.send(f"⚠️ Something went wrong answering that: {_esc(str(exc))}")
     return True
+
+
+def _do_capture(text: str, message: dict) -> bool:
+    notifier.send_chat_action("typing")
+    try:
+        res = capture.capture(text, author=_forward_author(message))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("ask-bot: capture failed")
+        notifier.send(f"⚠️ Couldn't capture that: {_esc(str(exc))}")
+        return True
+    kind = {"tweet": "X post", "article": "full article", "text": "text"}.get(res["kind"], res["kind"])
+    notifier.send(
+        f"📥 Captured {kind} ({res['chars']} chars):\n"
+        f"<b>{_esc(res['title'])}</b>\nIt'll appear in the next digest run."
+    )
+    return True
+
+
+def _handle_message(message: dict) -> bool:
+    """Route one inbound message: command / capture / question. True if replied.
+
+    Forwards and messages containing a link are captured into the clipped flow;
+    plain text is treated as a question. /ask and /capture force the routing.
+    """
+    text = (message.get("text") or message.get("caption") or "").strip()
+    if not text and not _is_forward(message):
+        return False
+
+    if text.startswith("/capture"):
+        return _do_capture(text[len("/capture"):].strip(), message)
+    if text.startswith("/ask"):
+        return _do_question(text[len("/ask"):].strip())
+    if text.startswith("/"):  # /start, /help, anything else
+        notifier.send(_HELP)
+        return True
+
+    if _is_forward(message) or capture.first_url(text):
+        return _do_capture(text, message)
+    return _do_question(text)
 
 
 def _is_authorized(update: dict) -> bool:
@@ -105,7 +166,6 @@ def run_listener(poll_timeout: int = 30) -> None:
             if not _is_authorized(u):
                 logger.warning("ask-bot: ignoring update from unauthorized chat")
                 continue
-            text = (u.get("message") or {}).get("text")
-            _handle_message(text)
+            _handle_message(u.get("message") or {})
         if not updates:
             time.sleep(1)  # gentle floor when long-poll returns empty/errs

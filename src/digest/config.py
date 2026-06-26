@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     # HDBSCAN: smallest group of items that counts as a narrative cluster.
     cluster_min_size: int = Field(default=4, alias="CLUSTER_MIN_SIZE")
 
+    # X/Twitter capture — fxtwitter resolves tweet text without auth (X itself
+    # is login-walled). Swap to https://api.vxtwitter.com or a self-host if down.
+    x_api_base: str = Field(default="https://api.fxtwitter.com", alias="X_API_BASE")
+
     # Obsidian (Phase 3)
     obsidian_vault_path: str = Field(default="", alias="OBSIDIAN_VAULT_PATH")
     obsidian_digest_dir: str = Field(default="80 Digest", alias="OBSIDIAN_DIGEST_DIR")
