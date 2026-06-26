@@ -45,6 +45,8 @@ def captured(monkeypatch):
     monkeypatch.setattr(notify.notifier, "enabled", True)
     monkeypatch.setattr(notify.notifier, "token", "t")
     monkeypatch.setattr(notify.notifier, "chat_id", "c")
+    # Bypass quiet hours so send-path tests don't depend on wall-clock time.
+    monkeypatch.setattr(notify, "_pushing_allowed", lambda *a, **k: True)
     return sent
 
 
@@ -173,3 +175,42 @@ def test_top_signals_respects_max_per_run(fresh_db, captured, monkeypatch):
     res = notify.notify_top_signals()
     assert res["candidates"] == 2
     assert res["sent"] == 2
+
+
+def test_pushing_allowed_only_8am_to_10pm(monkeypatch):
+    from datetime import datetime
+    monkeypatch.setattr(notify.settings, "notify_quiet_start_hour", 22)
+    monkeypatch.setattr(notify.settings, "notify_quiet_end_hour", 8)
+
+    def ok(h):
+        return notify._pushing_allowed(datetime(2026, 6, 26, h, 30))
+
+    assert ok(8) and ok(12) and ok(21)          # daytime → allowed
+    assert not ok(7) and not ok(22) and not ok(23) and not ok(2)  # night → quiet
+
+
+def test_quiet_hours_suppress_send_and_record(fresh_db, captured, monkeypatch):
+    monkeypatch.setattr(notify, "_pushing_allowed", lambda *a, **k: False)
+    monkeypatch.setattr(notify.settings, "notify_min_score", 0.80)
+    _seed_signal("hi", 0.95)
+    res = notify.notify_top_signals()
+    assert res == {"candidates": 0, "sent": 0}
+    assert captured == []  # nothing sent
+    with db.get_conn() as conn:  # nothing recorded → can still fire later in-window
+        assert conn.execute("SELECT COUNT(*) FROM notify_log").fetchone()[0] == 0
+
+
+def test_recency_window_excludes_old_items(fresh_db, captured, monkeypatch):
+    monkeypatch.setattr(notify.settings, "notify_min_score", 0.80)
+    monkeypatch.setattr(notify.settings, "notify_lookback_hours", 24)
+    _seed_signal("fresh", 0.95)  # ingested_at defaults to now
+    with db.get_conn() as conn:  # old high-score item summarized 3 days ago
+        conn.execute(
+            "INSERT INTO items (source, source_id, title, url, content, triage_decision, "
+            "triage_score, summary, why_it_matters, topic, summarized_at, ingested_at) "
+            "VALUES ('rss','old','Old',' https://x','c','keep',0.99,'s','w','AI',"
+            "datetime('now','-72 hours'), datetime('now','-72 hours'))"
+        )
+    res = notify.notify_top_signals()
+    assert res["candidates"] == 1  # only the fresh one; old item aged out
+    assert res["sent"] == 1
