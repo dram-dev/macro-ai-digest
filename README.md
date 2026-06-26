@@ -14,9 +14,10 @@ Full architecture lives in `Plan.md` in the Obsidian vault at
 
 ## Status — all phases shipped
 
-**Pipeline:** `ingest → triage (Ollama Qwen2.5:14b) → summarize (MLX
-Qwen3.6-27B local) → score → publish (Obsidian) → signals / essay / debate /
-dashboard / backtest`
+**Pipeline:** `ingest (+ full-text extraction) → triage (Ollama Qwen2.5:14b) →
+summarize (MLX Qwen3.6-27B local) → score → publish (Obsidian) → signals /
+essay / debate / dashboard / backtest`, plus a Telegram bot for net-new push
+alerts, ask-the-archive RAG, and forward-to-capture.
 
 **Ingestors (live):**
 - **Gmail / Economist newsletters** — OAuth, label-scoped, read-only
@@ -30,7 +31,10 @@ dashboard / backtest`
 - **CBOE / CFTC** — vol surface + COT positioning
 - **Yahoo Finance** — price data feeder for stock tracker
 - **Calendar** — economic event calendar (CPI, FOMC, NFP, etc.)
-- **Clipped** — web clippings via the Clipped service
+- **Clipped** — web clippings via the Clipped service, plus anything forwarded
+  to the Telegram bot (X posts, links, text)
+- **Full-text extraction** — excerpt-only RSS / Substack / HN items are expanded
+  to the full article body (trafilatura) before triage + summarize
 
 **Triage / summarize / score:**
 - Multi-topic taxonomy with sub-tags
@@ -46,8 +50,9 @@ dashboard / backtest`
 - Entity extraction + ticker linkage — items get attached to tickers in the
   stock tracker
 - Outcomes tracking — post-hoc validation of past signal calls
-- Cluster + narrative velocity — week-over-week momentum across clusters,
-  with cached Claude-assigned display names instead of raw TF-IDF labels
+- Cluster + narrative velocity — semantic clustering (Ollama `nomic-embed-text`
+  embeddings + HDBSCAN, with TF-IDF+KMeans fallback) and week-over-week
+  momentum, with cached Claude-assigned display names
 - Storyline threading — persistent multi-day narratives (Claude-maintained
   running state + daily deltas); movers surface in the Brief, weekly themes
   are seeded from active storylines
@@ -76,6 +81,14 @@ dashboard / backtest`
 - Bull / bear / synthesis debate on the week's contested theses
 - Backtest report — source × topic outcome analysis
 
+**Telegram bot (delivery + interaction):**
+- Push alerts for net-new top signals (score-gated, recency-windowed, quiet
+  hours) — see below
+- Ask the archive in natural language (local RAG over `nomic-embed-text`
+  embeddings, synthesized by MLX with citations)
+- Forward X posts / links / text to capture them into the digest, with an
+  instant inline takeaway
+
 ## Schedule
 
 Production schedule on the Mac mini (launchd jobs in `launchd/`):
@@ -92,6 +105,7 @@ Production schedule on the Mac mini (launchd jobs in `launchd/`):
 | `essay` | Fri 21:30 |
 | `debate` | Fri 22:00 |
 | `dashboard` | Fri 22:15 |
+| `askbot` listener | always-on (KeepAlive daemon) |
 
 Staggered with [pc-insurance-digest](https://github.com/dram-dev/pc-insurance-digest)
 (am 04:00, pm 16:00, weekly Sat 06:00) so the shared MLX server never has two
@@ -135,13 +149,19 @@ CLI commands: `ingest`, `sources`, `triage`, `summarize`, `pipeline`, `publish`,
 `weekly`, `regime`, `ensemble`, `outcomes`, `cluster`, `storylines`,
 `predictions`, `topic-state`, `signals`, `essay`, `debate`, `dashboard`,
 `sentiment`, `entities`, `stocks`, `calendar`, `velocity`, `backtest`,
-`notify`, `ask`, `ask-bot`, `recent`, `stats`, `health`, `security`, `init-db`.
+`notify`, `ask`, `ask-bot`, `capture`, `recent`, `stats`, `health`, `security`,
+`init-db`.
 
 ## Telegram push notifications (optional)
 
-High-signal items (triage score ≥ `NOTIFY_MIN_SCORE`, default 0.80) can fire a
-terse Telegram push at the end of each pipeline run — deduped per item so the
-am/pm runs never double-fire. Output is otherwise file-only (Obsidian).
+Net-new high-signal items fire a terse Telegram push at the end of a pipeline
+run. Filters: triage score ≥ `NOTIFY_MIN_SCORE` (default 0.90 — `triage_score`
+is coarse, so this keeps it to the top ~5%), summarized within
+`NOTIFY_LOOKBACK_HOURS` (default 24, so it's genuinely net-new rather than
+backlog), capped at `NOTIFY_MAX_PER_RUN`, and deduped per item so a signal never
+re-fires. Pushes respect quiet hours — only `NOTIFY_QUIET_END_HOUR` ≤ local hour
+< `NOTIFY_QUIET_START_HOUR` (default 8am–10pm); the 01:00 run stays silent and
+the 13:00 run delivers. Output is otherwise file-only (Obsidian).
 
 1. Message [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token.
 2. Message your new bot once, then read your chat id from
@@ -225,7 +245,7 @@ macro-ai-digest/
 ├── README.md
 ├── CHECKLIST.md
 ├── .env.example
-├── launchd/                       # am / pm + Fri-night batch + mlx server
+├── launchd/                       # am / pm + Fri-night batch + mlx server + askbot
 ├── scripts/                       # setup wizard, smoke test, install_launchd
 ├── config/
 │   ├── rss_feeds.yaml
@@ -248,7 +268,8 @@ macro-ai-digest/
     ├── signals.py                 # leaderboard scoring
     ├── ensemble.py                # multi-model signal fusion
     ├── outcomes.py                # post-hoc validation of past signals
-    ├── cluster.py                 # narrative clustering
+    ├── cluster.py                 # embeddings + HDBSCAN clustering (TF-IDF fallback)
+    ├── embeddings.py              # local text embeddings via Ollama (nomic-embed-text)
     ├── velocity.py                # week-over-week cluster momentum
     ├── sentiment.py               # MLX-local financial sentiment classifier
     ├── entities.py                # entity extraction + ticker linkage
@@ -257,9 +278,15 @@ macro-ai-digest/
     ├── indicators.py              # macro indicators bundle
     ├── connections.py             # cross-asset / cross-topic links
     ├── charts.py                  # native Mermaid xychart-beta blocks
+    ├── ask.py                     # ask-the-archive RAG (retrieve + synthesize)
+    ├── capture.py                 # forward-to-capture (X / link / text → clipped)
+    ├── telegram_bot.py            # interactive ask-bot long-poll listener
     ├── viz.py / health.py / security.py
+    ├── sinks/
+    │   ├── __init__.py            # Databricks medallion sink (shared core)
+    │   └── notify.py              # Telegram push + bot client
     └── ingest/
-        ├── base.py
+        ├── base.py, fulltext.py   # ingestor base + full-text extraction
         ├── gmail.py, reddit.py, substack.py, hackernews.py, rss.py
         ├── edgar.py, insider.py, ftd.py
         ├── fred.py, calendar.py
