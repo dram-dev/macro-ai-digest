@@ -88,7 +88,7 @@ def capture(
 ) -> dict:
     """Write forwarded content into the clip dir. Returns a summary dict.
 
-    Keys: path, title, url, chars, kind ('tweet' | 'article' | 'text').
+    Keys: path, title, url, chars, kind ('tweet' | 'article' | 'text'), body.
     """
     text = (text or "").strip()
     url = url or first_url(text)
@@ -128,4 +128,5 @@ def capture(
     path.write_text(f"---\n{fm_yaml}\n---\n{body}\n", encoding="utf-8")
     logger.info("capture: wrote %s (%d chars, kind=%s)", path.name, len(body), kind)
 
-    return {"path": path, "title": title, "url": url, "chars": len(body), "kind": kind}
+    return {"path": path, "title": title, "url": url, "chars": len(body),
+            "kind": kind, "body": body}
