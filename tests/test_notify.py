@@ -91,6 +91,51 @@ def test_html_escaping_in_signal():
     assert "b=1&amp;c=2" in out
 
 
+def test_signal_header_has_no_leading_star():
+    row = {"id": 1, "topic": "Fed", "title": "T", "why_it_matters": "w",
+           "triage_score": 0.88, "url": "https://x"}
+    out = notify._format_signal(row)
+    assert out.startswith("<b>Top signal</b> · Fed")  # no redundant leading ⭐
+    assert "(⭐ 0.88)" in out                          # score keeps its star
+
+
+def test_signal_meta_line_fields():
+    row = {
+        "id": 1, "topic": "AI capex", "title": "MSFT capex", "why_it_matters": "big",
+        "triage_score": 0.91, "url": "https://x", "source": "rss",
+        "metadata_json": '{"feed": "SemiAnalysis"}',
+        "published_at": "2026-06-24T13:00:00", "sentiment_label": "bullish",
+    }
+    out = notify._format_signal(row, storyline="Hyperscaler capex")
+    assert "SemiAnalysis" in out          # feed name preferred over raw source
+    assert "2026-06-24" in out            # publication date
+    assert "🟢 bullish" in out            # sentiment + emoji
+    assert "📖 Hyperscaler capex" in out  # storyline
+
+
+def test_source_name_resolution():
+    assert notify._source_name("rss", '{"feed": "SemiAnalysis"}') == "SemiAnalysis"
+    assert notify._source_name("hn", None) == "Hacker News"        # pretty map
+    assert notify._source_name("weirdsrc", None) == "Weirdsrc"     # title-case fallback
+
+
+def test_storyline_names_for_items(fresh_db):
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO storylines (id, slug, name, state) VALUES (1, 'hc', 'Hyperscaler capex', 's')"
+        )
+        conn.execute(
+            "INSERT INTO storyline_deltas (storyline_id, date, delta, item_ids) "
+            "VALUES (1, '2026-06-24', 'd', '[123, 7]')"
+        )
+    assert db.storyline_names_for_items([123, 7, 999]) == {
+        123: "Hyperscaler capex",
+        7: "Hyperscaler capex",
+    }
+    # substring 12 must NOT false-match inside 123 (Python membership, not LIKE)
+    assert db.storyline_names_for_items([12]) == {}
+
+
 def _seed_signal(source_id: str, score: float, *, title: str = "T") -> None:
     """Insert a kept + summarized item directly so it qualifies as a signal."""
     with db.get_conn() as conn:

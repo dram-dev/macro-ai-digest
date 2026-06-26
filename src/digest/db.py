@@ -287,7 +287,9 @@ def unnotified_high_signals(min_score: float, limit: int) -> list[sqlite3.Row]:
     """
     sql = """
         SELECT i.id, i.source, i.url, i.title, i.topic,
-               i.summary, i.why_it_matters, i.triage_score
+               i.summary, i.why_it_matters, i.triage_score,
+               i.published_at, i.sentiment_label, i.sentiment_score,
+               i.metadata_json
         FROM items i
         LEFT JOIN notify_log n
                ON n.alert_key = 'signal:' || i.id
@@ -309,6 +311,34 @@ def record_notification(alert_key: str, kind: str, item_id: int | None = None) -
             "INSERT OR IGNORE INTO notify_log (alert_key, kind, item_id) VALUES (?, ?, ?)",
             (alert_key, kind, item_id),
         )
+
+
+def storyline_names_for_items(item_ids: list[int]) -> dict[int, str]:
+    """Map each item_id to the name of a storyline it advanced (if any).
+
+    Membership is checked in Python against each delta's JSON id list (a SQL
+    LIKE would false-match 12 inside 123). Most recent delta wins per item.
+    """
+    if not item_ids:
+        return {}
+    wanted = set(item_ids)
+    out: dict[int, str] = {}
+    sql = """
+        SELECT s.name AS name, d.item_ids AS item_ids
+        FROM storyline_deltas d
+        JOIN storylines s ON s.id = d.storyline_id
+        ORDER BY d.date DESC
+    """
+    with get_conn() as conn:
+        for row in conn.execute(sql):
+            try:
+                ids = json.loads(row["item_ids"]) if row["item_ids"] else []
+            except (ValueError, TypeError):
+                ids = []
+            for i in ids:
+                if i in wanted and i not in out:
+                    out[i] = row["name"]
+    return out
 
 
 def items_needing_ensemble(limit: int = 200) -> list[sqlite3.Row]:
