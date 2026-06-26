@@ -288,13 +288,26 @@ def recent_kept_titles(hours: int = 24) -> list[str]:
     return [r["title"] for r in rows if r["title"]]
 
 
-def unnotified_high_signals(min_score: float, limit: int) -> list[sqlite3.Row]:
-    """Kept + summarized items scoring >= min_score that haven't been pushed yet.
+def unnotified_high_signals(
+    min_score: float, limit: int, lookback_hours: int = 0
+) -> list[sqlite3.Row]:
+    """Net-new kept+summarized items scoring >= min_score, not yet pushed.
 
-    A left-join against notify_log excludes anything already alerted, so the
-    am and pm runs never re-fire the same signal. Highest score first.
+    A left-join against notify_log excludes anything already alerted, so the am
+    and pm runs never re-fire the same signal. `lookback_hours` > 0 also
+    restricts to items summarized recently — without it the query scans all
+    history and would dribble out the entire backlog. Highest score first.
     """
-    sql = """
+    recency = ""
+    params: list = [min_score]
+    if lookback_hours > 0:
+        recency = (
+            "AND COALESCE(i.summarized_at, i.triaged_at, i.ingested_at) "
+            ">= datetime('now', ?)"
+        )
+        params.append(f"-{lookback_hours} hours")
+    params.append(limit)
+    sql = f"""
         SELECT i.id, i.source, i.url, i.title, i.topic,
                i.summary, i.why_it_matters, i.triage_score,
                i.published_at, i.sentiment_label, i.sentiment_score,
@@ -306,11 +319,12 @@ def unnotified_high_signals(min_score: float, limit: int) -> list[sqlite3.Row]:
           AND i.summary IS NOT NULL
           AND i.triage_score >= ?
           AND n.alert_key IS NULL
+          {recency}
         ORDER BY i.triage_score DESC, i.ingested_at DESC
         LIMIT ?
     """
     with get_conn() as conn:
-        return conn.execute(sql, (min_score, limit)).fetchall()
+        return conn.execute(sql, params).fetchall()
 
 
 def record_notification(alert_key: str, kind: str, item_id: int | None = None) -> None:

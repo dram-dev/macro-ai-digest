@@ -17,6 +17,7 @@ import html
 import json
 import logging
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -176,16 +177,35 @@ def _format_signal(row: sqlite3.Row, storyline: str | None = None) -> str:
     return "\n".join(lines)
 
 
+def _pushing_allowed(now: datetime | None = None) -> bool:
+    """True when the local hour is inside the allowed (non-quiet) window.
+
+    Allowed when end <= hour < start (e.g. 8 <= h < 22). A suppressed run isn't
+    a loss: the next run inside the window re-picks the items (within lookback).
+    """
+    h = (now or datetime.now()).hour
+    start = settings.notify_quiet_start_hour
+    end = settings.notify_quiet_end_hour
+    if end <= start:
+        return end <= h < start
+    return h >= end or h < start  # config with a window that wraps midnight
+
+
 def notify_top_signals() -> dict:
-    """Push not-yet-alerted items scoring >= NOTIFY_MIN_SCORE, highest first.
+    """Push net-new items scoring >= NOTIFY_MIN_SCORE, highest first.
 
     Returns {"candidates", "sent"}. Dedup is permanent per item via notify_log,
-    so the am and pm runs never re-fire the same signal.
+    a recency window keeps it to genuine net-new signals, and quiet hours
+    suppress the whole step (sending + recording) outside the allowed window.
     """
     out = {"candidates": 0, "sent": 0}
-    if not notifier.enabled:
+    if not notifier.enabled or not _pushing_allowed():
         return out
-    rows = db.unnotified_high_signals(settings.notify_min_score, settings.notify_max_per_run)
+    rows = db.unnotified_high_signals(
+        settings.notify_min_score,
+        settings.notify_max_per_run,
+        lookback_hours=settings.notify_lookback_hours,
+    )
     out["candidates"] = len(rows)
     stories = db.storyline_names_for_items([r["id"] for r in rows]) if rows else {}
     for row in rows:
@@ -206,7 +226,7 @@ def _brief_link(date_iso: str) -> str | None:
 
 def notify_brief_ready(date_iso: str) -> bool:
     """Optional once-per-run 'Brief ready' ping (off unless NOTIFY_BRIEF_PING)."""
-    if not (notifier.enabled and settings.notify_brief_ping):
+    if not (notifier.enabled and settings.notify_brief_ping and _pushing_allowed()):
         return False
     top = db.items_for_signals()[:5]
     lines = [f"📰 <b>Digest Brief ready</b> · {_esc(date_iso)}"]

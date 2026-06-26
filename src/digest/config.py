@@ -127,10 +127,19 @@ class Settings(BaseSettings):
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
     notify_enabled: bool = Field(default=True, alias="NOTIFY_ENABLED")
-    # Triage score a new item must reach to earn a push. 0.80 = "Balanced".
-    notify_min_score: float = Field(default=0.80, alias="NOTIFY_MIN_SCORE")
+    # Triage score a new item must reach to earn a push. triage_score is coarse
+    # (most kept items sit at 0.80–0.85), so 0.90 selects only the top ~5%.
+    notify_min_score: float = Field(default=0.90, alias="NOTIFY_MIN_SCORE")
+    # Only push items summarized within this many hours — keeps pushes to genuine
+    # net-new signals instead of draining the whole historical backlog.
+    notify_lookback_hours: int = Field(default=24, alias="NOTIFY_LOOKBACK_HOURS")
     # Cap pushes per pipeline run so one busy day can't spam the phone.
     notify_max_per_run: int = Field(default=5, alias="NOTIFY_MAX_PER_RUN")
+    # Quiet hours (local time): pushes only fire when end <= hour < start. So
+    # 8/22 = "from 8am, stop after 10pm". Suppressed pushes aren't lost — the
+    # next run inside the window re-evaluates them (within the lookback).
+    notify_quiet_start_hour: int = Field(default=22, alias="NOTIFY_QUIET_START_HOUR")
+    notify_quiet_end_hour: int = Field(default=8, alias="NOTIFY_QUIET_END_HOUR")
     # Optional once-per-run "Brief ready" ping. Off by default.
     notify_brief_ping: bool = Field(default=False, alias="NOTIFY_BRIEF_PING")
 
