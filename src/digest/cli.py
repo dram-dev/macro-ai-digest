@@ -397,6 +397,56 @@ def notify(test_only: bool) -> None:
 
 
 @main.command()
+@click.argument("question", nargs=-1, required=True)
+@click.option("-k", "k", type=int, default=8, help="How many items to retrieve")
+@click.option("--days", type=int, default=0, help="Only search items from the last N days (0=all)")
+def ask(question: tuple[str, ...], k: int, days: int) -> None:
+    """Ask a question answered from the kept-item archive (local RAG)."""
+    from digest import ask as ask_mod
+
+    db.init_db()
+    q = " ".join(question)
+    console.rule("[bold cyan]ask")
+    try:
+        result = ask_mod.answer_question(q, k=k, days=days)
+    except ask_mod.AskError as exc:
+        console.print(f"  [red]✗[/red] {escape(str(exc))}")
+        return
+    if result["answer"]:
+        console.print(result["answer"])
+    else:
+        console.print("[yellow]No synthesis (LLM step failed) — top matches:[/yellow]")
+    console.rule("[dim]sources")
+    for n, s in enumerate(result["sources"], 1):
+        date = (s.get("published_at") or "")[:10]
+        console.print(
+            f"  [dim][{n}][/dim] {escape(s.get('title') or '')} "
+            f"[dim]({s.get('source')} · {date} · score {s['score']:.2f})[/dim]"
+        )
+
+
+@main.command(name="ask-bot")
+def ask_bot() -> None:
+    """Run the interactive Telegram listener: answer questions from your phone."""
+    from digest.sinks.notify import notifier
+    from digest.telegram_bot import run_listener
+
+    db.init_db()
+    console.rule("[bold cyan]ask-bot")
+    if not notifier.enabled:
+        console.print(
+            "  [yellow]disabled or unconfigured[/yellow] — set TELEGRAM_BOT_TOKEN + "
+            "TELEGRAM_CHAT_ID (and NOTIFY_ENABLED=true)"
+        )
+        return
+    console.print("  [green]✓[/green] listening — send your bot a question (Ctrl-C to stop)")
+    try:
+        run_listener()
+    except KeyboardInterrupt:
+        console.print("\n  stopped")
+
+
+@main.command()
 @click.option(
     "--date",
     "date_iso",
