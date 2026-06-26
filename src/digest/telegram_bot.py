@@ -96,6 +96,40 @@ def _do_question(text: str) -> bool:
     return True
 
 
+def _capture_takeaway(res: dict) -> str | None:
+    """Summarize captured content immediately, reusing the digest's summarizer.
+
+    Returns an HTML takeaway block, or None if there's nothing to summarize or
+    the backend is unavailable (capture still succeeds either way).
+    """
+    body = res.get("body")
+    if not body:
+        return None
+    try:
+        from digest.summarize import summarize_item
+
+        out = summarize_item({
+            "source": "telegram",
+            "title": res.get("title", ""),
+            "url": res.get("url"),
+            "content": body,
+            "topic": "",
+        })
+    except Exception:  # noqa: BLE001
+        logger.warning("ask-bot: inline summary failed", exc_info=True)
+        return None
+
+    parts = []
+    if out.summary:
+        parts.append(_esc(out.summary))
+    if out.why_it_matters:
+        parts.append(f"<i>Why it matters:</i> {_esc(out.why_it_matters)}")
+    if not parts:
+        return None
+    head = f"🧠 <b>Takeaway</b>{f' ({_esc(out.topic)})' if out.topic else ''}"
+    return head + "\n" + "\n".join(parts)
+
+
 def _do_capture(text: str, message: dict) -> bool:
     notifier.send_chat_action("typing")
     try:
@@ -104,11 +138,15 @@ def _do_capture(text: str, message: dict) -> bool:
         logger.exception("ask-bot: capture failed")
         notifier.send(f"⚠️ Couldn't capture that: {_esc(str(exc))}")
         return True
-    kind = {"tweet": "X post", "article": "full article", "text": "text"}.get(res["kind"], res["kind"])
-    notifier.send(
-        f"📥 Captured {kind} ({res['chars']} chars):\n"
-        f"<b>{_esc(res['title'])}</b>\nIt'll appear in the next digest run."
+    kind = {"tweet": "X post", "article": "full article", "text": "text"}.get(
+        res["kind"], res["kind"]
     )
+    reply = f"📥 Captured {kind} ({res['chars']} chars):\n<b>{_esc(res['title'])}</b>"
+    takeaway = _capture_takeaway(res)
+    if takeaway:
+        reply += f"\n\n{takeaway}"
+    reply += "\n\n<i>Filed for the next digest run.</i>"
+    notifier.send(reply[:_MAX_MSG])
     return True
 
 

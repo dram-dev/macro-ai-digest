@@ -95,6 +95,36 @@ def test_forwarded_message_routes_to_capture(sent, monkeypatch):
     assert "Captured X post" in sent[-1]
 
 
+def test_capture_replies_with_inline_takeaway(sent, monkeypatch):
+    from digest.summarize import SummaryOutput
+
+    monkeypatch.setattr(
+        tb.capture, "capture",
+        lambda text, **k: {"kind": "article", "chars": 1500, "title": "Capex news",
+                           "url": "https://x", "body": "MSFT raised capex guidance."},
+    )
+    monkeypatch.setattr(
+        "digest.summarize.summarize_item",
+        lambda item, **k: SummaryOutput(
+            topic="ai_capex", summary="MSFT guided capex up.",
+            why_it_matters="Bullish for NVDA.", confidence="high"),
+    )
+    assert tb._handle_message({"text": "https://x"}) is True
+    msg = sent[-1]
+    assert "Takeaway" in msg
+    assert "MSFT guided capex up." in msg
+    assert "Bullish for NVDA." in msg
+
+
+def test_capture_takeaway_skipped_when_no_body(monkeypatch):
+    # No body → no summarizer call, no takeaway, capture still succeeds.
+    monkeypatch.setattr(
+        "digest.summarize.summarize_item",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not summarize")),
+    )
+    assert tb._capture_takeaway({"title": "T"}) is None
+
+
 def test_forward_author_extraction():
     assert tb._forward_author({"forward_origin": {"sender_user": {"first_name": "Ada"}}}) == "Ada"
     assert tb._forward_author({"forward_sender_name": "Hidden User"}) == "Hidden User"
