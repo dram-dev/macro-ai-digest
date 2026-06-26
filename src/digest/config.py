@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     triage_min_score: float = Field(default=0.5, alias="TRIAGE_MIN_SCORE")
     triage_lookback_hours: int = Field(default=24, alias="TRIAGE_LOOKBACK_HOURS")
 
+    # Embeddings (clustering + retrieval). Served by Ollama — the MLX server
+    # does completions only. Pull once: `ollama pull nomic-embed-text`.
+    embed_model: str = Field(default="nomic-embed-text", alias="EMBED_MODEL")
+    # HDBSCAN: smallest group of items that counts as a narrative cluster.
+    cluster_min_size: int = Field(default=4, alias="CLUSTER_MIN_SIZE")
+
     # Obsidian (Phase 3)
     obsidian_vault_path: str = Field(default="", alias="OBSIDIAN_VAULT_PATH")
     obsidian_digest_dir: str = Field(default="80 Digest", alias="OBSIDIAN_DIGEST_DIR")

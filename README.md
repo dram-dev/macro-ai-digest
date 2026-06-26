@@ -102,7 +102,9 @@ clients in flight at once.
 - Python 3.12+
 - `uv` (`brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - Mac mini (or any Apple Silicon Mac) for execution
-- Ollama running locally with `qwen2.5:14b` pulled
+- Ollama running locally with `qwen2.5:14b` pulled (triage). Optional but
+  recommended: `ollama pull nomic-embed-text` — enables embedding-based
+  clustering; without it, clustering falls back to TF-IDF automatically.
 - MLX-LM server (this project's `com.dr.mlx.server` launchd job keeps it up;
   pc-insurance-digest depends on it too)
 - Free API credentials:
