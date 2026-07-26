@@ -11,7 +11,6 @@ import requests
 
 from digest.config import settings
 from digest.ingest.base import IngestedItem, IngestorBase
-from digest.ingest.fulltext import enrich
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +34,15 @@ HITS_PER_QUERY = 10
 
 class HNIngestor(IngestorBase):
     name = "hn"
+    enrich_fulltext = True  # most stories link out with no story_text
+
+    def enrich_url(self, item: IngestedItem) -> str | None:
+        """Only expand stories that link to an external article.
+
+        A self/Ask-HN post's url is its own discussion thread, so extracting it
+        would file the comment page as the item's body.
+        """
+        return item.metadata.get("external_url")
 
     def fetch(self) -> list[IngestedItem]:
         items: list[IngestedItem] = []
@@ -71,8 +79,6 @@ class HNIngestor(IngestorBase):
                     # no external link, so we keep their story_text as-is.
                     external_url = hit.get("url")
                     content = hit.get("story_text") or ""
-                    if external_url:
-                        content = enrich(content, external_url)
                     items.append(
                         IngestedItem(
                             source=self.name,
@@ -88,6 +94,7 @@ class HNIngestor(IngestorBase):
                                 "points": hit.get("points"),
                                 "num_comments": hit.get("num_comments"),
                                 "query": q,
+                                "external_url": external_url,
                             },
                         )
                     )

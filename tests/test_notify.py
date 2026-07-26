@@ -9,6 +9,8 @@ import pytest
 
 from digest import db
 from digest.config import Settings
+from digest_core.sinks import telegram as _tg
+
 from digest.sinks import notify
 
 
@@ -41,7 +43,7 @@ def captured(monkeypatch):
         sent.append(json)
         return _Resp()
 
-    monkeypatch.setattr(notify.requests, "post", _post)
+    monkeypatch.setattr(_tg.requests, "post", _post)
     monkeypatch.setattr(notify.notifier, "enabled", True)
     monkeypatch.setattr(notify.notifier, "token", "t")
     monkeypatch.setattr(notify.notifier, "chat_id", "c")
@@ -54,7 +56,7 @@ def test_disabled_notifier_is_noop(monkeypatch):
     monkeypatch.setattr(notify.notifier, "enabled", False)
     # Even if requests.post would blow up, disabled short-circuits before it.
     monkeypatch.setattr(
-        notify.requests, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError)
+        _tg.requests, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError)
     )
     assert notify.notifier.send("hi") is False
 
@@ -72,7 +74,7 @@ def test_send_swallows_network_error(monkeypatch):
     def _boom(*a, **k):
         raise OSError("down")
 
-    monkeypatch.setattr(notify.requests, "post", _boom)
+    monkeypatch.setattr(_tg.requests, "post", _boom)
     assert notify.notifier.send("hi") is False
 
 
@@ -158,12 +160,12 @@ def test_top_signals_threshold_and_dedup(fresh_db, captured, monkeypatch):
     _seed_signal("lo", 0.50)    # below threshold → ignored
 
     first = notify.notify_top_signals()
-    assert first == {"candidates": 1, "sent": 1}
+    assert first == {"candidates": 1, "sent": 1, "suppressed": False}
     assert len(captured) == 1
 
     # Second run (simulating the pm pass) must not re-fire the same item.
     second = notify.notify_top_signals()
-    assert second == {"candidates": 0, "sent": 0}
+    assert second == {"candidates": 0, "sent": 0, "suppressed": False}
     assert len(captured) == 1
 
 
@@ -194,7 +196,8 @@ def test_quiet_hours_suppress_send_and_record(fresh_db, captured, monkeypatch):
     monkeypatch.setattr(notify.settings, "notify_min_score", 0.80)
     _seed_signal("hi", 0.95)
     res = notify.notify_top_signals()
-    assert res == {"candidates": 0, "sent": 0}
+    # `suppressed` distinguishes quiet hours from "nothing scored high enough".
+    assert res == {"candidates": 0, "sent": 0, "suppressed": True}
     assert captured == []  # nothing sent
     with db.get_conn() as conn:  # nothing recorded → can still fire later in-window
         assert conn.execute("SELECT COUNT(*) FROM notify_log").fetchone()[0] == 0

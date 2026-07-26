@@ -223,6 +223,20 @@ def log_run(
     })
 
 
+def existing_source_ids(source: str) -> set[str]:
+    """All source_id values already stored for a source.
+
+    Lets an ingestor skip expensive per-item work (full-text fetches) for items
+    it already has — `upsert_items` is INSERT OR IGNORE, so that work would be
+    discarded anyway.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT source_id FROM items WHERE source = ?", (source,)
+        ).fetchall()
+    return {r["source_id"] for r in rows}
+
+
 def item_stats() -> dict[str, int]:
     """Return item counts grouped by source."""
     with get_conn() as conn:
@@ -274,6 +288,30 @@ def items_for_signals() -> list[sqlite3.Row]:
     """
     with get_conn() as conn:
         return conn.execute(sql).fetchall()
+
+
+def top_items_for_brief(limit: int = 5, since_iso: str | None = None) -> list[sqlite3.Row]:
+    """Highest-scoring kept items, optionally scoped to one day's ingest.
+
+    The Brief ping used `items_for_signals()[:5]`, which decoded the whole
+    archive to print five titles and — being unscoped — printed the same
+    all-time top five every day.
+    """
+    clauses = ["triage_decision = 'keep'", "summary IS NOT NULL"]
+    params: list = []
+    if since_iso:
+        clauses.append("ingested_at >= ?")
+        params.append(since_iso)
+    params.append(limit)
+    sql = f"""
+        SELECT id, title, url, topic, triage_score
+        FROM items
+        WHERE {" AND ".join(clauses)}
+        ORDER BY triage_score DESC, ingested_at DESC
+        LIMIT ?
+    """
+    with get_conn() as conn:
+        return conn.execute(sql, params).fetchall()
 
 
 def recent_kept_titles(hours: int = 24) -> list[str]:
@@ -465,6 +503,22 @@ def items_for_clustering() -> list[sqlite3.Row]:
     """
     with get_conn() as conn:
         return conn.execute(sql).fetchall()
+
+
+def clear_cluster_ids(item_ids: list[int]) -> None:
+    """Drop the cluster label from items that came out of clustering as noise.
+
+    Without this a row keeps whatever label it last received, so labels from a
+    previous run (or a previous algorithm) linger and get counted alongside the
+    current ones.
+    """
+    if not item_ids:
+        return
+    with get_conn() as conn:
+        conn.executemany(
+            "UPDATE items SET cluster_id = NULL WHERE id = ?",
+            [(i,) for i in item_ids],
+        )
 
 
 def update_cluster_ids(id_to_label: dict[int, str]) -> None:
