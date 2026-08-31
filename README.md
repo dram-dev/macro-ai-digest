@@ -145,6 +145,11 @@ uv run digest pipeline --run-type manual
 uv run digest stats
 ```
 
+The required pipeline stages (ingest → triage → both summarize passes → publish)
+gate the run: any failure stops the pipeline, prints a run-quality summary, and
+exits non-zero, so a broken scheduled run can't be mistaken for a healthy one.
+The Fri-night enrichment jobs (signals / essay / debate / …) stay best-effort.
+
 CLI commands: `ingest`, `sources`, `triage`, `summarize`, `pipeline`, `publish`,
 `weekly`, `regime`, `ensemble`, `outcomes`, `cluster`, `storylines`,
 `predictions`, `topic-state`, `signals`, `essay`, `debate`, `dashboard`,
@@ -260,6 +265,7 @@ macro-ai-digest/
     ├── triage.py                  # Ollama Qwen2.5 prompt + auto-keep hooks
     ├── summarize.py               # MLX runner + materiality prompt
     ├── obsidian.py                # daily / weekly / topic-archive writer
+    ├── brief.py                   # mobile-first Brief front page
     ├── weekly.py                  # weekly synthesis (themes / must-reads / contrarian)
     ├── essay.py                   # long-form weekly essay
     ├── debate.py                  # bull / bear / synthesis debate
@@ -271,6 +277,9 @@ macro-ai-digest/
     ├── cluster.py                 # embeddings + HDBSCAN clustering (TF-IDF fallback)
     ├── embeddings.py              # local text embeddings via Ollama (nomic-embed-text)
     ├── velocity.py                # week-over-week cluster momentum
+    ├── storylines.py              # persistent multi-day narrative threading
+    ├── topic_state.py             # per-topic "state of play" briefs
+    ├── predictions.py             # falsifiable-call scorecard, judged at horizon
     ├── sentiment.py               # MLX-local financial sentiment classifier
     ├── entities.py                # entity extraction + ticker linkage
     ├── stock_tracker.py           # per-ticker Investments/ folder
@@ -281,7 +290,8 @@ macro-ai-digest/
     ├── ask.py                     # ask-the-archive RAG (retrieve + synthesize)
     ├── capture.py                 # forward-to-capture (X / link / text → clipped)
     ├── telegram_bot.py            # interactive ask-bot long-poll listener
-    ├── viz.py / health.py / security.py
+    ├── claude_cli.py              # `claude -p` shell-out (claude_cli_pro backend)
+    ├── health.py / security.py
     ├── sinks/
     │   ├── __init__.py            # Databricks medallion sink (shared core)
     │   └── notify.py              # Telegram push + bot client
