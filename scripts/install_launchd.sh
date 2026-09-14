@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install AM + PM launchd jobs on the Mac mini.
+# Install the launchd jobs on the Mac mini.
 # Run from the project root: bash scripts/install_launchd.sh
 
 set -euo pipefail
@@ -20,7 +20,19 @@ echo "Target:  $LAUNCH_AGENTS"
 mkdir -p "$LAUNCH_AGENTS"
 mkdir -p "$PROJECT_PATH/logs"
 
-for label in am pm weekly signals essay calendar velocity backtest debate dashboard askbot; do
+# Retired jobs: the am/pm pair became one `daily` run (first in the overnight
+# sequence; pc-insurance-digest queues behind it on the cross-digest pipeline
+# lock). Unload + remove them so an upgrade doesn't leave the old schedule firing.
+for label in am pm; do
+    old="$LAUNCH_AGENTS/com.dr.digest.${label}.plist"
+    launchctl bootout "gui/$(id -u)/com.dr.digest.${label}" 2>/dev/null || true
+    if [[ -f "$old" ]]; then
+        rm -f "$old"
+        echo "✓ Retired $label job"
+    fi
+done
+
+for label in daily notify weekly signals essay calendar velocity backtest debate dashboard askbot; do
     src="$PROJECT_PATH/launchd/com.dr.digest.${label}.plist"
     dst="$LAUNCH_AGENTS/com.dr.digest.${label}.plist"
 

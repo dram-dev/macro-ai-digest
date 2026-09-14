@@ -189,21 +189,33 @@ def triage_item(item: dict[str, Any]) -> dict[str, Any]:
     return _normalize_verdict(verdict)
 
 
-def run_triage(limit: int = 200) -> dict[str, int]:
-    """Triage all pending items (up to `limit`). Returns counts by decision."""
+def run_triage(
+    limit: int | None = None, lookback_hours: int | None = None
+) -> dict[str, int]:
+    """Triage pending items ingested since the previous scheduled run.
+
+    `limit` defaults to TRIAGE_MAX_PER_RUN; `lookback_hours` defaults to
+    `db.triage_lookback_hours()` — the pipeline resolves it before ingesting.
+    Returns counts by decision.
+    """
+    if limit is None:
+        limit = settings.triage_max_per_run
+    if lookback_hours is None:
+        lookback_hours = db.triage_lookback_hours()
     # Auto-keep quantitative items first so they never reach Qwen.
     auto_kept = db.auto_keep_quantitative()
     if auto_kept:
         logger.info("triage: auto-kept %d quantitative items (bypassing Qwen)", auto_kept)
 
-    items = db.items_needing_triage(limit=limit)
+    items = db.items_needing_triage(limit=limit, lookback_hours=lookback_hours)
     if not items:
         logger.info("triage: nothing pending")
         return {"pending": 0, "kept": auto_kept, "dropped": 0, "errors": 0}
 
-    # Seed seen_titles from DB (kept items in the last 24h) for cross-run dedup.
+    # Seed seen_titles from DB (kept since the previous run) for cross-run dedup —
+    # with one run a day, yesterday's kept titles sit right at a fixed 24h edge.
     # Items kept earlier in this same batch are appended as we go.
-    seen_titles = db.recent_kept_titles(hours=24)
+    seen_titles = db.recent_kept_titles(hours=lookback_hours)
 
     counts = {"pending": len(items), "kept": 0, "dropped": 0, "errors": 0}
     for row in items:

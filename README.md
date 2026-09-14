@@ -95,8 +95,8 @@ Production schedule on the Mac mini (launchd jobs in `launchd/`):
 
 | Job | When |
 |---|---|
-| `am` pipeline | daily 01:00 |
-| `pm` pipeline | daily 13:00 |
+| `daily` pipeline | daily 01:00 (first in the overnight sequence) |
+| `notify` | daily 08:00 — sends the overnight run's Telegram pushes once quiet hours end |
 | `calendar` | Fri 20:45 |
 | `weekly` | Fri 19:00 |
 | `signals` | Fri 21:00 |
@@ -107,9 +107,17 @@ Production schedule on the Mac mini (launchd jobs in `launchd/`):
 | `dashboard` | Fri 22:15 |
 | `askbot` listener | always-on (KeepAlive daemon) |
 
-Staggered with [pc-insurance-digest](https://github.com/dram-dev/pc-insurance-digest)
-(am 04:00, pm 16:00, weekly Sat 06:00) so the shared MLX server never has two
-clients in flight at once.
+One run a day, sequenced with
+[pc-insurance-digest](https://github.com/dram-dev/pc-insurance-digest) so the two
+never share the local Ollama/MLX servers at once: PC's daily job fires at 01:05
+and waits for this run to finish. Every `digest pipeline` (either project,
+scheduled or manual) holds a shared lock for the whole run
+(`/tmp/digest-pipeline.lock`, via `digest_core.runlock.pipeline_serialize`); a
+second run logs who it's waiting on, starts when the first finishes, and after
+`PIPELINE_LOCK_TIMEOUT_SEC` (default 4h) gives up with a non-zero exit rather
+than overlap. Each run triages everything ingested since the previous scheduled
+run (never less than `TRIAGE_LOOKBACK_HOURS`). PC's weekly job runs Sat 06:00.
+`scripts/install_launchd.sh` also retires the old `am`/`pm` jobs.
 
 ## Prerequisites
 
@@ -166,7 +174,7 @@ is coarse, so this keeps it to the top ~5%), summarized within
 backlog), capped at `NOTIFY_MAX_PER_RUN`, and deduped per item so a signal never
 re-fires. Pushes respect quiet hours — only `NOTIFY_QUIET_END_HOUR` ≤ local hour
 < `NOTIFY_QUIET_START_HOUR` (default 8am–10pm); the 01:00 run stays silent and
-the 13:00 run delivers. Output is otherwise file-only (Obsidian).
+the 08:00 `notify` job delivers. Output is otherwise file-only (Obsidian).
 
 1. Message [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token.
 2. Message your new bot once, then read your chat id from
