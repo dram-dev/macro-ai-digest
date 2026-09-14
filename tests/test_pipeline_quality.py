@@ -60,6 +60,13 @@ def stub_pipeline(monkeypatch, tmp_path):
             "confirmed": 0, "contradicted": 0, "pending": 0}},
         "digest.predictions": {"resolve_due_predictions": lambda *a, **k: {
             "due": 0, "correct": 0, "incorrect": 0, "unclear": 0, "deferred": 0}},
+        # The notify stage reads the configured DB and can reach Telegram from a
+        # machine with creds set — never let the quality-gate tests do either.
+        "digest.sinks.notify": {
+            "notify_top_signals": lambda *a, **k: {
+                "candidates": 0, "sent": 0, "suppressed": False},
+            "notify_brief_ready": lambda *a, **k: False,
+        },
     }
     for name, funcs in fakes.items():
         monkeypatch.setitem(sys.modules, name, _fake_module(name, **funcs))
