@@ -20,16 +20,35 @@ from digest.config import settings
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 120
+_BATCH = 256  # cap per request; one POST for the whole corpus outgrows _TIMEOUT
 
 
 def embed_texts(texts: list[str]) -> list[list[float]] | None:
-    """Embed a batch of texts. Returns one vector per text, or None on failure.
+    """Embed texts. Returns one vector per text, or None on failure.
+
+    Chunked so the request size stays bounded as the archive grows: a single
+    POST for the whole corpus eventually exceeds the timeout, and because a
+    failure here is indistinguishable from "model not pulled", that silently
+    downgraded clustering to the TF-IDF fallback with only a log line.
 
     An empty input returns an empty list (not None) — that's success with
     nothing to do, distinct from a backend failure.
     """
     if not texts:
         return []
+    if len(texts) > _BATCH:
+        out: list[list[float]] = []
+        for start in range(0, len(texts), _BATCH):
+            chunk = _embed_chunk(texts[start : start + _BATCH])
+            if chunk is None:
+                return None
+            out.extend(chunk)
+        return out
+    return _embed_chunk(texts)
+
+
+def _embed_chunk(texts: list[str]) -> list[list[float]] | None:
+    """One request's worth of embeddings."""
     url = f"{settings.ollama_host}/api/embed"
     try:
         r = requests.post(

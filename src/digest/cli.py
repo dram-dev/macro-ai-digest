@@ -310,9 +310,8 @@ def pipeline(run_type: str, skip_publish: bool) -> None:
 
             nr = notify_top_signals()
             notify_brief_ready(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-            console.print(
-                f"  [green]✓[/green] notify: sent={nr['sent']} candidates={nr['candidates']}"
-            )
+            state = "quiet hours" if nr["suppressed"] else f"candidates={nr['candidates']}"
+            console.print(f"  [green]✓[/green] notify: sent={nr['sent']} {state}")
         except Exception as exc:  # noqa: BLE001
             console.print(f"  [yellow]⚠[/yellow] notify skipped: {escape(str(exc))}")
             failures.append(f"notify (optional): {exc}")
@@ -376,7 +375,7 @@ def publish(date_iso: str | None, topics_only: bool) -> None:
 @click.option("--test", "test_only", is_flag=True, help="Send a test push and exit")
 def notify(test_only: bool) -> None:
     """Send pending high-signal Telegram pushes (or --test to verify setup)."""
-    from digest.sinks.notify import notifier, notify_top_signals
+    from digest.sinks.notify import notifier, notify_top_signals, send_test
 
     db.init_db()
     console.rule("[bold cyan]notify")
@@ -387,7 +386,7 @@ def notify(test_only: bool) -> None:
         )
         return
     if test_only:
-        ok = notifier.send_test()
+        ok = send_test()
         console.print("  [green]✓[/green] test sent" if ok else "  [red]✗[/red] test failed")
         return
     nr = notify_top_signals()

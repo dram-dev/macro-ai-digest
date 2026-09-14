@@ -57,6 +57,11 @@ def run_clustering() -> dict[str, int]:
     # Skip noise items (label None) — they stay unclustered rather than forced
     # into a bucket they don't belong to.
     mapping = {ids[i]: lab for i, lab in enumerate(labels) if lab}
+    # Clear the ids of everything we just re-clustered before writing the new
+    # ones. KMeans used to label every row, so the column was rewritten each
+    # run; HDBSCAN leaves noise unlabelled, and without this those rows keep a
+    # stale label forever and get mixed into the velocity deltas.
+    db.clear_cluster_ids([i for i in ids if i not in mapping])
     db.update_cluster_ids(mapping)
     n_clusters = len(set(mapping.values()))
     logger.info("cluster: %d items → %d clusters (%s)", len(rows), n_clusters, method)
