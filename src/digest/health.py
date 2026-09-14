@@ -16,8 +16,8 @@ from digest import db
 from digest.config import settings
 
 LAUNCHD_LABELS = [
-    "com.dr.digest.am",
-    "com.dr.digest.pm",
+    "com.dr.digest.daily",
+    "com.dr.digest.notify",
     "com.dr.digest.weekly",
     "com.dr.digest.calendar",
     "com.dr.digest.signals",

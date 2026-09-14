@@ -15,6 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from digest import cli
+from digest_core import runlock
 
 
 def _fake_module(name: str, **funcs) -> types.ModuleType:
@@ -31,9 +32,12 @@ def _boom(msg: str):
 
 
 @pytest.fixture
-def stub_pipeline(monkeypatch):
+def stub_pipeline(monkeypatch, tmp_path):
     """Patch every stage to a benign success; tests override one at a time."""
+    # Private lock file: a real digest run holding /tmp's lock must not stall tests.
+    monkeypatch.setenv("PIPELINE_LOCK_PATH", str(tmp_path / "pipeline.lock"))
     monkeypatch.setattr(cli.db, "init_db", lambda *a, **k: None)
+    monkeypatch.setattr(cli.db, "triage_lookback_hours", lambda: 24)
     monkeypatch.setattr(cli, "run_ingest", lambda *a, **k: (0, 0))
 
     fakes = {
@@ -121,3 +125,28 @@ def test_optional_enrichment_failure_with_markup_stays_non_fatal(stub_pipeline):
     assert res.exit_code == 0, res.output            # enrichment miss stays non-fatal
     assert "connections (optional)" in res.output
     assert "[active]" in res.output                  # bracket content preserved, not eaten
+
+
+def test_triage_window_is_resolved_before_ingest_logs_this_run(stub_pipeline):
+    # Resolved after ingest, the window would anchor on THIS run's own run_log
+    # rows and shrink to the floor — stranding the previous run's leftovers.
+    calls: list = []
+    stub_pipeline.setattr(cli.db, "triage_lookback_hours", lambda: calls.append("window") or 30)
+    stub_pipeline.setattr(cli, "run_ingest", lambda *a, **k: calls.append("ingest") or (0, 0))
+    stub_pipeline.setitem(sys.modules, "digest.triage", _fake_module(
+        "digest.triage",
+        run_triage=lambda *a, **k: calls.append(k) or {"kept": 1, "dropped": 0, "errors": 0}))
+    res = CliRunner().invoke(cli.main, ["pipeline", "--run-type", "daily"])
+    assert res.exit_code == 0, res.output
+    assert calls == ["window", "ingest", {"lookback_hours": 30}]
+
+
+def test_pipeline_waits_its_turn_and_fails_if_the_other_run_is_wedged(stub_pipeline):
+    stub_pipeline.setenv("PIPELINE_LOCK_TIMEOUT_SEC", "0.1")
+    stub_pipeline.setattr(runlock, "_POLL_SEC", 0.02)
+    with runlock.pipeline_serialize("pc-insurance-digest"):
+        res = CliRunner().invoke(cli.main, ["pipeline", "--run-type", "daily"])
+    assert res.exit_code == 1, res.output
+    assert "waiting for the other digest run" in res.output
+    assert "pc-insurance-digest" in res.output
+    assert "stage 1: ingest" not in res.output  # never ran alongside it

@@ -48,8 +48,9 @@ class Settings(BaseSettings):
     # Summarizer (Phase 2)
     summarizer_backend: str = Field(default="mlx_local", alias="SUMMARIZER_BACKEND")
     summarizer_model: str = Field(default="sonnet", alias="SUMMARIZER_MODEL")
-    summarizer_max_per_run: int = Field(default=75, alias="SUMMARIZER_MAX_PER_RUN")
-    summarizer_max_per_source: int = Field(default=15, alias="SUMMARIZER_MAX_PER_SOURCE")
+    # Sized for ONE run a day (the pipeline used to run am + pm at 75/15 each).
+    summarizer_max_per_run: int = Field(default=150, alias="SUMMARIZER_MAX_PER_RUN")
+    summarizer_max_per_source: int = Field(default=30, alias="SUMMARIZER_MAX_PER_SOURCE")
     # Keep-items older than this never get summarized (0 disables the age-out).
     # Stops capped-out sources (RSS) from accumulating an ever-growing backlog.
     summarizer_max_age_days: int = Field(default=30, alias="SUMMARIZER_MAX_AGE_DAYS")
@@ -63,7 +64,11 @@ class Settings(BaseSettings):
     ollama_host: str = Field(default="http://localhost:11434", alias="OLLAMA_HOST")
     ollama_model: str = Field(default="qwen2.5:14b", alias="OLLAMA_MODEL")
     triage_min_score: float = Field(default=0.5, alias="TRIAGE_MIN_SCORE")
+    # Floor for the triage window; the pipeline widens it to reach back past the
+    # previous scheduled run, so a late or skipped day never strands items.
     triage_lookback_hours: int = Field(default=24, alias="TRIAGE_LOOKBACK_HOURS")
+    # A day's worth of new items in one run, with headroom.
+    triage_max_per_run: int = Field(default=400, alias="TRIAGE_MAX_PER_RUN")
 
     # Embeddings (clustering + retrieval). Served by Ollama — the MLX server
     # does completions only. Pull once: `ollama pull nomic-embed-text`.
