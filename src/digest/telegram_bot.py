@@ -34,11 +34,16 @@ _HELP = (
     "📬 <b>Gmail</b>\n"
     "<code>/gmail</code> signs the digest in to Gmail again, from this phone."
 )
+# Safari, not Telegram's own browser: on the first real sign-in (2026-10-22) the
+# in-app browser hung on the redirect to localhost and never showed its address,
+# which holds the code. Safari shows "can't connect to the server" with it.
 _GMAIL_START = (
     "📬 <b>Gmail sign-in</b>\n"
-    "1. {link} and pick the Google account that gets the <i>{label}</i> mail.\n"
-    "2. Approve. Your phone then opens a page that won't load. That's expected.\n"
-    "3. Copy that page's whole address and send it to me here."
+    "1. Press and hold {link}, tap Copy, and paste it into <b>Safari</b> "
+    "(Telegram's own browser hangs at step 3).\n"
+    "2. Pick the Google account that gets the <i>{label}</i> mail and tap Continue. "
+    "Safari then says it can't connect to the server. That's expected.\n"
+    "3. Press and hold Safari's address bar, tap Copy, and send me that address here."
 )
 
 
@@ -174,7 +179,7 @@ def _do_gmail_start() -> bool:
         notifier.send(f"⚠️ {_esc(str(exc))}")
         return True
     safe = _href(link)
-    opener = f'Open <a href="{safe}">Google\'s sign-in</a>' if safe else f"Open {_esc(link)}"
+    opener = f'<a href="{safe}">Google\'s sign-in link</a>' if safe else f"this link: {_esc(link)}"
     notifier.send(_GMAIL_START.format(link=opener, label=_esc(settings.gmail_label)))
     return True
 

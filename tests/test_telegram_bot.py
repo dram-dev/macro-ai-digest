@@ -139,7 +139,7 @@ def test_gmail_command_sends_googles_link(sent, monkeypatch):
                         lambda: "https://accounts.google.com/o/oauth2/auth?client_id=c&state=s&code_challenge=x")
     assert tb._handle_message({"text": "/gmail"}) is True
     assert 'href="https://accounts.google.com/o/oauth2/auth?client_id=c&amp;state=s' in sent[-1]
-    assert "Copy that page's whole address" in sent[-1]
+    assert "Safari" in sent[-1] and "Press and hold Safari's address bar" in sent[-1]
 
 
 def test_the_pasted_address_finishes_and_is_never_captured(sent, monkeypatch):

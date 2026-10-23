@@ -19,10 +19,11 @@ The OAuth client ID downloaded from Google Cloud Console:
 Created automatically by the first `digest ingest gmail` run after you
 authorize access in the browser. Subsequent runs refresh it silently.
 
-**From your phone:** send `/gmail` to the digest's Telegram bot. Open the
-link it replies with and approve. Your phone then lands on a `localhost:8765`
-page that won't load; copy that page's whole address and send it back to the
-bot, which saves the token here. While you're signing in, `gmail_pending.json`
+**From your phone:** send `/gmail` to the digest's Telegram bot. Copy the
+link it replies with into **Safari** (Telegram's own browser hangs on the
+redirect and never shows the address) and approve. Safari then says it
+can't connect to `localhost`; press and hold its address bar, Copy, and send
+that address back to the bot, which saves the token here. While you're signing in, `gmail_pending.json`
 holds the sign-in's one-time verifier (0600, gone once it's done).
 
 **It lasts 7 days while the consent screen is in Testing.** Google ends a
