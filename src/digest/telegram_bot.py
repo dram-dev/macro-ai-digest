@@ -30,7 +30,15 @@ _HELP = (
     "• <i>Any signals on the 2s10s spread?</i>\n\n"
     "📥 <b>Capture</b>\n"
     "Forward an X/Twitter post, a link, or paste text — I'll file it into the "
-    "digest's clipped folder for the next run. Force it with <code>/capture</code>."
+    "digest's clipped folder for the next run. Force it with <code>/capture</code>.\n\n"
+    "📬 <b>Gmail</b>\n"
+    "<code>/gmail</code> signs the digest in to Gmail again, from this phone."
+)
+_GMAIL_START = (
+    "📬 <b>Gmail sign-in</b>\n"
+    "1. {link} and pick the Google account that gets the <i>{label}</i> mail.\n"
+    "2. Approve. Your phone then opens a page that won't load. That's expected.\n"
+    "3. Copy that page's whole address and send it to me here."
 )
 
 
@@ -158,16 +166,58 @@ def _do_capture(text: str, message: dict) -> bool:
     return True
 
 
+def _do_gmail_start() -> bool:
+    from digest.ingest import gmail      # Google's libraries load only when asked
+    try:
+        link = gmail.begin_phone_signin()
+    except gmail.SignInError as exc:
+        notifier.send(f"⚠️ {_esc(str(exc))}")
+        return True
+    safe = _href(link)
+    opener = f'Open <a href="{safe}">Google\'s sign-in</a>' if safe else f"Open {_esc(link)}"
+    notifier.send(_GMAIL_START.format(link=opener, label=_esc(settings.gmail_label)))
+    return True
+
+
+def _do_gmail_finish(text: str) -> bool:
+    """The address Google sent the phone to. Never captured, never logged: it holds
+    a single-use code (worthless without this Mac's PKCE verifier, but still)."""
+    from digest.ingest import gmail
+    try:
+        res = gmail.finish_phone_signin(text)
+    except gmail.SignInError as exc:
+        notifier.send(f"⚠️ {_esc(str(exc))}")
+        return True
+    lines = ["✅ <b>Gmail is signed in again.</b> The next digest run reads "
+             f"<i>{_esc(settings.gmail_label)}</i> again."]
+    if not res.get("refresh_token"):
+        lines.append("Google sent no long-term sign-in, so this lasts about an hour. "
+                     "Remove the digest's access at myaccount.google.com/permissions, then send /gmail again.")
+    elif res.get("ends_in_days"):
+        lines.append(f"Google will end this sign-in in {res['ends_in_days']} days, because the app is in "
+                     "Testing in Google Cloud. Send /gmail again then, or publish the app "
+                     "(Google Auth Platform → Audience → Publish app) to keep it signed in.")
+    notifier.send("\n".join(lines))
+    return True
+
+
 def _handle_message(message: dict) -> bool:
     """Route one inbound message: command / capture / question. True if replied.
 
     Forwards and messages containing a link are captured into the clipped flow;
     plain text is treated as a question. /ask and /capture force the routing.
+    The address that finishes a Gmail sign-in is caught before any of that.
     """
     text = (message.get("text") or message.get("caption") or "").strip()
     if not text and not _is_forward(message):
         return False
 
+    from digest.ingest.gmail import looks_like_signin_reply
+    if text.startswith("/gmail"):
+        rest = text[len("/gmail"):].strip()
+        return _do_gmail_finish(rest) if rest else _do_gmail_start()
+    if looks_like_signin_reply(text):
+        return _do_gmail_finish(text)
     if text.startswith("/capture"):
         return _do_capture(text[len("/capture"):].strip(), message)
     if text.startswith("/ask"):
