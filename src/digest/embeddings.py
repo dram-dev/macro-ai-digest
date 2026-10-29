@@ -20,7 +20,12 @@ from digest.config import settings
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 120
-_BATCH = 256  # cap per request; one POST for the whole corpus outgrows _TIMEOUT
+# Cap per request: one POST for the whole corpus outgrows _TIMEOUT, and since
+# Ollama 0.40 (llama-server runner) /api/embed tokenizes each input over its own
+# local connection, so a request with more inputs than macOS's listen backlog
+# (kern.ipc.somaxconn = 128) gets "connection reset" and a 400. Measured
+# 2026-10-28: 256 one-word inputs failed 2 of 3 times; 64 and 128 passed 12/12.
+_BATCH = 64
 
 
 def embed_texts(texts: list[str]) -> list[list[float]] | None:

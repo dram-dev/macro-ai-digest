@@ -19,7 +19,7 @@ from digest.config import settings
 
 logger = logging.getLogger(__name__)
 
-_EMBED_BATCH = 256
+_EMBED_BATCH = 64  # matches embeddings._BATCH; see there for why it is not larger
 _DEFAULT_K = 8
 
 
